@@ -70,8 +70,8 @@ mv temp-skills/stm32-config-manager skills/
 ### Шаг 1: Изучите Спецификацию Agent Skills
 
 Ознакомьтесь с форматом навыков в официальной документации:
-- [Спецификация Agent Skills](https://agentskills.io/llms.txt)
-- [Требования к SKILL.md](https://github.com/agentskills/agentskills)
+- [Что такое Agent Skills](https://agentskills.io/what-are-skills)
+- [Спецификация к SKILL.md](https://agentskills.io/specification)
 
 **Ключевые требования:**
 - Файл `SKILL.md` должен содержать YAML frontmatter + Markdown
@@ -93,15 +93,15 @@ mv temp-skills/stm32-config-manager skills/
 Для формирования качественного навыка соберите:
 
 | Материал | Источник | Назначение |
-|----------|----------|------------|
+| --- | --- | --- |
 | Datasheet устройства | Сайт производителя | Карта регистров, биты, последовательности |
-| Примеры драйверов ST | [STM32Cube_FW](https://github.com/STMicroelectronics/STM32CubeF4) | Образец BSP-структуры |
+| Примеры драйверов | [STM32CubeF4](https://github.com/STMicroelectronics/STM32CubeF4) | Образец BSP-структуры |
 | Ваша схема подключения | Ваш проект | Конкретный интерфейс (I2C/SPI/UART) |
 
 **Пример запроса к ИИ-ассистенту:**
 
 ```
-Используя навык stm32-bsp-driver-pattern, создай драйвер для датчика температуры
+Используя навык stm32-bsp-driver-pattern, создай драйвер для датчика температуры 
 TMP102 по datasheet. Интерфейс подключения: I2C1 (SCL=PB6, SDA=PB7).
 
 Материалы:
@@ -164,9 +164,9 @@ meta
 
 ## 🔗 Полезные Ссылки
 
-- [Спецификация Agent Skills](https://agentskills.io/llms.txt)
+- [Спецификация Agent Skills](https://agentskills.io/specification)
 - [Фреймворк stm32-cmake-yml](https://github.com/ViacheslavMezentsev/stm32-cmake-yml)
-- [STM32Cube_FW Примеры](https://github.com/STMicroelectronics/STM32CubeF4/tree/main/Drivers/BSP/Components)
+- [STM32Cube_FW Примеры](https://github.com/STMicroelectronics/STM32CubeF4/tree/master/Drivers/BSP/Components)
 - [Документация STM32](https://www.st.com/en/microcontrollers-microprocessors/stm32-mainstream-mcus.html)
 
 ## ⚠️ Ограничения
