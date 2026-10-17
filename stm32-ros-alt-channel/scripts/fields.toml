@@ -1,0 +1,51 @@
+# Поля, которые публикует альтернативный канал.
+#
+# Каждое поле описывается выражением GDB, которое вычисляется БЕЗ подключения к цели: адрес берётся из
+# отладочной информации ELF. Поэтому адреса не нужно вписывать руками — после пересборки прошивки
+# достаточно перезапустить `resolve_addresses.py`.
+#
+# `expr` — любое выражение GDB, дающее адрес (указатель):
+#   * `&имя` — для обычной глобальной переменной;
+#   * `(char*)&база + (long)&((Тип*)0)->поле` — для поля структуры. Второе слагаемое GDB считает как
+#     смещение по DWARF, не обращаясь к памяти, поэтому работает офлайн.
+#
+# Все выражения ниже вычисляются БЕЗ цели. Если понадобится адрес объекта из кучи (`&*ptr`), запускайте
+# резолвер с `--target host:port` — тогда GDB сначала подключится к цели (плата через OpenOCD, QEMU или
+# GDB-сервер Renode).
+#
+# `kind` — как разбирать прочитанное 32-битное слово:
+#   uint32          — беззнаковое целое;
+#   uint32_seconds  — беззнаковое целое, значение / 1000 (для uptime);
+#   float32         — биты float (IEEE-754).
+#
+# `min`/`max` (необязательно) — правдоподобный диапазон; значения вне него отбрасываются.
+
+[[field]]
+topic = "/board/sys/uptime_s"
+message = "std_msgs/UInt32"
+kind = "uint32_seconds"
+expr = "&uwTick"
+
+[[field]]
+topic = "/board/sensor/batt_v"
+message = "std_msgs/Float32"
+kind = "float32"
+expr = "(char*)&sensors + (long)&((SensorManager*)0)->cached_data.voltage_batt"
+min = 0.0
+max = 40.0
+
+[[field]]
+topic = "/board/aio/batt_v"
+message = "std_msgs/Float32"
+kind = "float32"
+expr = "(char*)&sensors + (long)&((SensorManager*)0)->cached_data.raw.voltage_batt"
+min = 0.0
+max = 40.0
+
+# Счётчик HAL с разрешением 1 мс (uptime_s выше — это он же, делённый на 1000).
+# Нужен как независимая от часов WSL опора времени: по нему видно, сколько реально прошло на плате.
+[[field]]
+topic = "/board/sys/uptime_ms"
+message = "std_msgs/UInt32"
+kind = "uint32"
+expr = "&uwTick"
