@@ -1,0 +1,84 @@
+cpu: CPU.CortexM @ sysbus
+    // В Renode 1.16.1 тип "cortex-m4f" возвращает CPUID Cortex-M7 (0x411FC272),
+    // из-за чего прошивка печатает "CPU: Cortex-M?" вместо "Cortex-M4".
+    // "cortex-m4" даёт CPUID Cortex-M4: 0x410FC241 в 1.16.1 и 0x410FC240 (r0p0) в 1.17.0,
+    // поэтому проверять стоит номер ядра (0xC24), а не ревизию.
+    cpuType: "cortex-m4"
+    nvic: nvic
+
+semihosting: CPU.SemihostingHandler @ cpu
+uart: UART.SemihostingUart @ semihosting
+
+nvic: IRQControllers.NVIC @ sysbus 0xE000E000
+    -> cpu@0
+    priorityMask: 0xF0
+
+flash: Memory.MappedMemory @ sysbus 0x08000000
+    size: 0x00080000
+
+sram: Memory.MappedMemory @ sysbus 0x20000000
+    size: 0x00020000
+
+// --- Заглушки для периферии (адреса сверены с STM32G474.svd) ---
+
+rcc: Memory.MappedMemory @ sysbus 0x40021000
+    size: 0x400
+
+syscfg: Memory.MappedMemory @ sysbus 0x40010000
+    size: 0x400
+
+flash_ctrl: Memory.MappedMemory @ sysbus 0x40022000
+    size: 0x400
+
+gpioa: Memory.MappedMemory @ sysbus 0x48000000
+    size: 0x400
+
+gpiob: Memory.MappedMemory @ sysbus 0x48000400
+    size: 0x400
+
+gpioc: Memory.MappedMemory @ sysbus 0x48000800
+    size: 0x400
+
+dbgmcu: Memory.MappedMemory @ sysbus 0xE0042000
+    size: 0x400
+
+pwr: Memory.MappedMemory @ sysbus 0x40007000
+    size: 0x400
+
+dwt: Memory.MappedMemory @ sysbus 0xE0001000
+    size: 0x1000
+
+crc: Memory.MappedMemory @ sysbus 0x40023000
+    size: 0x400
+
+// TIM1 — сюда лезет HAL_InitTick() ещё до определения IS_RUNNING_IN_QEMU()
+tim1: Memory.MappedMemory @ sysbus 0x40012C00
+    size: 0x400
+
+exti: Memory.MappedMemory @ sysbus 0x40010400
+    size: 0x400
+
+usart1: Memory.MappedMemory @ sysbus 0x40013800
+    size: 0x400
+
+usart2: Memory.MappedMemory @ sysbus 0x40004400
+    size: 0x400
+
+usart3: Memory.MappedMemory @ sysbus 0x40004800
+    size: 0x400
+
+// ADC1 + ADC2 + ADC12_Common — все в одной 0x400-странице
+adc: Memory.MappedMemory @ sysbus 0x50000000
+    size: 0x400
+
+fdcan1: Memory.MappedMemory @ sysbus 0x40006400
+    size: 0x400
+
+rtc: Memory.MappedMemory @ sysbus 0x40002800
+    size: 0x400
+
+dma1: Memory.MappedMemory @ sysbus 0x40020000
+    size: 0x400
+
+dma2: Memory.MappedMemory @ sysbus 0x40020400
+    size: 0x400

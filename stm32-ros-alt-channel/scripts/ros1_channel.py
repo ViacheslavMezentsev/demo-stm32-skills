@@ -3,7 +3,7 @@
 МАРШРУТЫ
     --via openocd     данные читаются из памяти платы через отладчик (OpenOCD на Windows).
                       Нужны: OpenOCD, ST-Link, ELF прошивки. Root/socat не нужны, UART свободен.
-    --via rosserial   штатные топики прошивки по отладочному UART (COM7) через tcp_serial_redirect +
+    --via rosserial   штатные топики прошивки по отладочному UART (--port) через tcp_serial_redirect +
                       socat + serial_node. Нужны: ST-Link VCOM, root в WSL (берётся как `wsl -u root`).
                       Переживает перезагрузку платы: serial_node пересогласует топики сам.
 
@@ -31,13 +31,16 @@ import time
 
 HERE = pathlib.Path(__file__).resolve().parent
 import os
-ROOT = pathlib.Path(os.environ.get("ROS1_PROJECT_ROOT", HERE.parents[1]))
+# Корень проекта прошивки: ELF, SVD (resources/STM32<профиль>.svd) и журналы ищутся от него.
+ROOT = pathlib.Path(os.environ.get("ROS1_PROJECT_ROOT", os.getcwd()))
 ROS_ALT = HERE
 RESOLVE = ROS_ALT / "resolve_addresses.py"
 ADDRESSES = ROS_ALT / "addresses.json"
 TELEMETRY_NODE = ROS_ALT / "telemetry_node.py"
 RECORDER = HERE / "recorder_node.py"
-REDIRECT = ROOT / "tools" / "scripts" / "tcp_serial_redirect.py"
+# Пример tcp_serial_redirect.py из pyserial (examples/), положенный в проект.
+REDIRECT = pathlib.Path(os.environ.get("ROS1_TCP_SERIAL_REDIRECT",
+                                       ROOT / "tools" / "scripts" / "tcp_serial_redirect.py"))
 DISTRO = "Ubuntu-20.04"
 ROS_SETUP = "source /opt/ros/noetic/setup.bash"
 ROS_MASTER_URI = "http://127.0.0.1:11311"
@@ -177,9 +180,9 @@ def doctor(args):
             "OpenOCD не запущен — проверится при старте канала")
     # Адреса считаются при запуске канала, поэтому проверяем наличие резолвера и спецификации,
     # а не готовый JSON: иначе на чистой машине доктор ложно показывает проблему.
-    add("Резолвер адресов", RESOLVE.is_file(), str(RESOLVE.relative_to(ROOT)))
+    add("Резолвер адресов", RESOLVE.is_file(), str(RESOLVE))
     add("Спецификация полей", (ROS_ALT / "fields.toml").is_file(), "fields.toml")
-    add("Каталог для логов", LOG_DIR.parent.is_file() or True, str(LOG_DIR.relative_to(ROOT)))
+    add("Каталог для логов", LOG_DIR.parent.is_file() or True, str(LOG_DIR))
 
     print("доктор окружения (ничего не запускается):")
     print("  %-42s %-6s %s" % ("проверка", "итог", "детали"))
@@ -198,7 +201,7 @@ def doctor(args):
             blocked += 1
         print("  %-42s %-6s %s" % (name, "ок" if ok else "ЗАНЯТО", detail[:48]))
     if blocked:
-        print("  занято/осталось: %d — выполните: python tools/scripts/ros1_channel.py --cleanup"
+        print("  занято/осталось: %d — выполните: python ros1_channel.py --cleanup"
               % blocked)
     else:
         print("  чисто: можно запускать")
@@ -505,13 +508,16 @@ def main():
     parser.add_argument("--seconds", type=float, default=0.0, help="остановиться через N секунд")
     parser.add_argument("--keep", action="store_true", help="не останавливать канал")
     parser.add_argument("--cleanup", action="store_true", help="только остановить всё")
-    parser.add_argument("--elf", default="build/current/firmware.elf")
+    parser.add_argument("--elf", default=os.environ.get("FIRMWARE_ELF", "build/firmware.elf"))
     parser.add_argument("--profile", default="F411", choices=["F411", "G474"])
-    parser.add_argument("--port", default="COM7", help="COM-порт ST-Link VCOM")
+    parser.add_argument("--port", default=os.environ.get("ROS1_SERIAL_PORT"),
+                        help="COM-порт ST-Link VCOM (по умолчанию $ROS1_SERIAL_PORT)")
     parser.add_argument("--baud", type=int, default=460800)
     parser.add_argument("--tcp", type=int, default=7777)
     parser.add_argument("--pty", default="/dev/ttyVirtual0")
     args = parser.parse_args()
+    if args.via in ("rosserial", "both") and not args.port and not (args.cleanup or args.doctor):
+        parser.error("для маршрута rosserial укажите --port или ROS1_SERIAL_PORT")
 
     # Артефакты храним рядом с ELF пресета: его путь и определяет набор файлов опытов.
     global LOG_DIR

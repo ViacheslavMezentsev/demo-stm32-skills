@@ -20,14 +20,14 @@
 import argparse
 import hashlib
 import json
+import os
 import pathlib
 import subprocess
 import sys
 import tempfile
 
 HERE = pathlib.Path(__file__).resolve().parent
-ROOT = HERE.parents[3]
-sys.path.insert(0, str(HERE.parents[1] / "18-rosbag-windows"))
+sys.path.insert(0, str(HERE))
 from svd_lookup import SvdLookup
 
 try:
@@ -35,21 +35,35 @@ try:
 except ModuleNotFoundError:                       # Python < 3.11
     import tomli as tomllib
 
-DEFAULT_ELF = "build/current/firmware.elf"
-GDB_PY3 = "arm-none-eabi-gdb-py3.exe"
+DEFAULT_ELF = os.environ.get("FIRMWARE_ELF", "build/firmware.elf")
+# GDB с Python: xPack (Windows/Linux) или gdb-multiarch из дистрибутива Linux.
+GDB_NAMES = ("arm-none-eabi-gdb-py3", "arm-none-eabi-gdb", "gdb-multiarch")
 
 
 def find_gdb():
-    """Найти gdb с поддержкой Python: сначала в PATH, потом в тулчейне проекта."""
+    """Найти gdb с поддержкой Python: $GDB, затем PATH, затем $STM32_TOOLCHAIN_PATH/bin."""
     import shutil
 
-    found = shutil.which(GDB_PY3)
-    if found:
-        return found
-    toolchain = pathlib.Path(r"C:\Users\User\xpack-arm-none-eabi-gcc-14.2.1-1.1\bin") / GDB_PY3
-    if toolchain.is_file():
-        return str(toolchain)
-    raise SystemExit("не найден %s — нужен GDB с Python" % GDB_PY3)
+    if os.environ.get("GDB"):
+        return os.environ["GDB"]
+    toolchain = os.environ.get("STM32_TOOLCHAIN_PATH")
+    for name in GDB_NAMES:
+        found = shutil.which(name)
+        if not found and toolchain:
+            found = shutil.which(name, path=str(pathlib.Path(toolchain) / "bin"))
+        if found and gdb_has_python(found):
+            return found
+    raise SystemExit("не найден GDB с Python (%s); задайте GDB=<путь>" % ", ".join(GDB_NAMES))
+
+
+def gdb_has_python(gdb):
+    """Есть ли в этой сборке GDB поддержка Python (xPack без -py3 её не имеет)."""
+    try:
+        result = subprocess.run([gdb, "-q", "-batch", "-ex", "python print(42)"],
+                                capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0 and "42" in result.stdout
 
 
 def build_gdb_script(fields, elf, out_path, target=None):
@@ -115,7 +129,7 @@ def resolve(elf, spec_path, svd_path, target=None):
         try:
             result = subprocess.run([gdb, "-q", "-batch", str(elf), "-x", str(script)],
                                     capture_output=True, text=True, encoding="utf-8",
-                                    errors="replace", cwd=ROOT)
+                                    errors="replace")
         finally:
             script.unlink(missing_ok=True)
         try:
@@ -140,7 +154,8 @@ def main():
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--elf", default=DEFAULT_ELF)
     parser.add_argument("--spec", default=str(HERE / "fields.toml"))
-    parser.add_argument("--svd", default=str(ROOT / "resources" / "STM32F411.svd"))
+    parser.add_argument("--svd", default=os.environ.get("STM32_SVD"),
+                        help="SVD-файл MCU (по умолчанию $STM32_SVD); нужен для полей svd:...")
     parser.add_argument("--out", default=str(HERE / "addresses.json"))
     parser.add_argument("--target", help="host:port живой цели (нужно для адресов из кучи)")
     args = parser.parse_args()

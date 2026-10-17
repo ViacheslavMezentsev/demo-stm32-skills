@@ -29,7 +29,7 @@ import subprocess
 import sys
 import time
 
-ROOT = pathlib.Path(__file__).resolve().parents[4]
+ROOT = pathlib.Path.cwd()  # корень проекта прошивки: запускать из него (build/firmware.elf)
 TOOLS = pathlib.Path(__file__).resolve().parent.parent
 STAND = "stand60-home"
 DEFAULT_ELF = "build/firmware.elf"

@@ -1,0 +1,20 @@
+# Ручной прогон в Renode 1.17: стартовый лог прошивки в файл.
+# Пути задаются при запуске, например:
+#   renode --disable-gui --console --plain \
+#     -e '$platform=@assets/stm32g4_mock.repl; $log=@build/startup.log; $bin=@build/firmware.elf; include @assets/boot.resc'
+# Штатный прогон с проверкой лога — scripts/run.py (отдельный каталог на каждую попытку).
+logLevel 3
+
+using sysbus
+mach create "board"
+
+machine LoadPlatformDescription $platform
+
+# Каталог журнала должен существовать.
+cpu.semihosting.uart CreateFileBackend $log true
+
+sysbus LoadELF $bin
+
+# Одна виртуальная секунда: этого хватает на стартовый лог.
+emulation RunFor "1"
+quit

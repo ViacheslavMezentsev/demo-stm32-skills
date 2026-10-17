@@ -1,4 +1,12 @@
-"""Run the firmware boot log (F411/QEMU or G474/Renode), optionally verify it."""
+"""Run the firmware boot log (F411/QEMU or G474/Renode), optionally verify it.
+
+    python scripts/run.py --profile G474 --elf build/firmware.elf
+    python scripts/run.py --profile G474 --elf build/firmware.elf --verify --expected boot.toml
+    python scripts/run.py --profile F411 --elf build/firmware.elf --qemu qemu-system-arm
+
+The G474 platform defaults to assets/stm32g4_mock.repl of this skill (--platform overrides it).
+Every attempt gets a new output directory with startup.log, emulator.log and run.json.
+"""
 import argparse
 from datetime import datetime, timezone
 import hashlib
@@ -11,7 +19,8 @@ import subprocess
 import sys
 import uuid
 
-ROOT = Path(__file__).resolve().parents[1]
+SKILL = Path(__file__).resolve().parents[1]
+DEFAULT_PLATFORM = SKILL / "assets" / "stm32g4_mock.repl"
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import renode_compat
 
@@ -21,7 +30,7 @@ import renode_compat
 # `renode_compat`), но помечена к выводу из эксплуатации.
 PRIMARY_VERSION = (1, 17, 0)
 COMPATIBLE_VERSIONS = ((1, 16, 1),)
-# Каталог второй версии в Docker-образе: рядом с основной, как описано в docs/HOWTO.md.
+# Каталог второй версии в Docker-образе, где рядом установлены 1.16.1 (в PATH) и 1.17.0.
 SECOND_VERSION_PATH = "/opt/renode-1.17.0/renode"
 
 
@@ -83,7 +92,7 @@ def renode_path(path):
     return '@' + value.replace(' ', '\\ ')
 
 
-def command(profile, binary, elf, output, renode_version=None):
+def command(profile, binary, elf, output, renode_version=None, platform_file=None):
     if profile == "F411":
         # File chardev separates semihosting from emulator diagnostics.
         log = (output / "startup.log").as_posix().replace(',', ',,')
@@ -92,7 +101,7 @@ def command(profile, binary, elf, output, renode_version=None):
                 '-semihosting-config', 'enable=on,target=native,chardev=boot', '-kernel', str(elf)]
     platform = output / "platform.repl"
     platform.write_text(renode_compat.platform_text(
-        (ROOT / "tools/renode/stm32g4_mock.repl").read_text(encoding="utf-8"),
+        Path(platform_file or DEFAULT_PLATFORM).read_text(encoding="utf-8"),
         renode_version), encoding="utf-8")
     script = output / "boot.resc"
     script.write_text('\n'.join([
@@ -132,11 +141,15 @@ def main(argv=None):
     parser.add_argument('--renode')
     parser.add_argument('--objcopy', default='arm-none-eabi-objcopy')
     parser.add_argument('--timeout', type=float)
+    parser.add_argument('--platform', type=Path, help='Renode REPL for G474 (default: assets/stm32g4_mock.repl)')
     parser.add_argument('--verify', action='store_true', help='Also validate the boot log against ELF and expected TOML')
+    parser.add_argument('--expected', type=Path, help='Expected boot log TOML for --verify (see assets/expected.example.toml)')
     args = parser.parse_args(argv)
     timeout = args.timeout if args.timeout is not None else (20 if args.profile == 'F411' else 40)
     if not 0 < timeout <= 300:
         parser.error('timeout must be finite and in (0, 300] seconds')
+    if args.verify and not args.expected:
+        parser.error('--verify needs --expected <toml>')
     elf = args.elf.resolve()
     output = (args.output or elf.parent / 'emulation' / (
         datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S') + '-' + uuid.uuid4().hex[:8])).resolve()
@@ -157,7 +170,7 @@ def main(argv=None):
             binary, version = find_renode(args.renode)
             check_version(version)
             result['renode_version'] = '.'.join(map(str, version))
-        cmd = command(args.profile, binary, elf, output, version)
+        cmd = command(args.profile, binary, elf, output, version, args.platform)
         result['command'] = cmd
         result['process_code'] = run_process(cmd, output / 'emulator.log', timeout)
         boot = output / 'startup.log'
@@ -169,9 +182,9 @@ def main(argv=None):
             raise ValueError('No firmware output; see emulator.log')
         result.update(status='CAPTURED', command_code=0)
         if args.verify:
-            check = [sys.executable, str(ROOT / 'ci/local/check_startup_log.py'),
+            check = [sys.executable, str(SKILL / 'scripts' / 'check_startup_log.py'),
                      '--elf', str(elf), '--log', str(boot),
-                     '--expected', str(ROOT / f'ci/local/expected/{args.profile}.toml'),
+                     '--expected', str(args.expected.resolve()),
                      '--report', str(output / 'startup-log-report.json'), '--objcopy', args.objcopy]
             code = run_process(check, output / 'verification.log', 60)
             result.update(verification_code=code, verified=True,

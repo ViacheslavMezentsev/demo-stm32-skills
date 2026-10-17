@@ -1,0 +1,27 @@
+# Ожидания к стартовому логу прошивки для scripts/check_startup_log.py.
+# Файл относится к прошивке, а не к навыку: скопируйте его в проект и замените строки
+# на то, что печатает ваш sys_log при старте. Строки лога — с префиксом времени
+# вида "[   0.001] ", сравнение идёт по тексту после префикса.
+
+emulator = "renode"          # или "qemu" — попадает в отчёт
+machine = "stm32g4_mock"     # имя макета или машины QEMU — попадает в отчёт
+
+min_lines = 4                # меньше строк — лог оборван
+first_line = "^boot: start"  # регулярное выражение для первой строки
+last_line = "^boot: done"    # и для последней
+
+[require]
+# Каждое выражение обязано найтись хотя бы в одной строке. Подстановки берутся из ELF:
+# {version}, {build}, {revision} — секция .fw_version (struct: u8 major, minor, patch,
+# reserved; u16 build, revision); {crc32} — секция .checksum; {size} — размер образа.
+lines = [
+    "^CPU: Cortex-M4 \\(CPUID 0x410FC24[0-9A-F]\\)",
+    "^Firmware: v{version} build {build}\\.{revision}",
+]
+
+[forbid]
+# Ни одно выражение не должно встретиться: признаки чужой среды или отказа.
+lines = [
+    "Cortex-M7",
+    "HardFault",
+]

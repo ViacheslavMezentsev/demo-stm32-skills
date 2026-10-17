@@ -1,0 +1,16 @@
+# Отладка в Renode 1.17: машина загружена и стоит на точке входа, ждёт GDB.
+#   renode -e '$platform=@assets/stm32g4_mock.repl; $log=@build/startup.log; $bin=@build/firmware.elf; include @assets/debug.resc'
+#   arm-none-eabi-gdb build/firmware.elf -ex "target remote :3334"
+# Ядро не стартует до команды continue в GDB (как ключ -S у QEMU).
+logLevel 1
+
+using sysbus
+mach create "board"
+
+machine LoadPlatformDescription $platform
+
+cpu.semihosting.uart CreateFileBackend $log true
+
+sysbus LoadELF $bin
+
+machine StartGdbServer 3334

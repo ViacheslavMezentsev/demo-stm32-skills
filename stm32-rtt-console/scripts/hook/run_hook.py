@@ -22,7 +22,7 @@ import subprocess
 import sys
 import time
 
-ROOT = pathlib.Path(__file__).resolve().parents[4]
+ROOT = pathlib.Path.cwd()  # корень проекта прошивки: запускать из него (build/firmware.elf)
 TOOLS = pathlib.Path(__file__).resolve().parents[1]
 STAND = "stand60-home"
 RTT_CB = 0x2001E000

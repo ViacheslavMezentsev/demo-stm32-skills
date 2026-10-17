@@ -19,7 +19,7 @@ import sys
 import threading
 import time
 
-ROOT = pathlib.Path(__file__).resolve().parents[2]
+ROOT = pathlib.Path.cwd()  # корень проекта прошивки: запускать из него (build/firmware.elf)
 TOOLS = pathlib.Path(__file__).resolve().parent
 STAND = "stand60-home"
 BLOCK_ADDRESS = 0x2001E000

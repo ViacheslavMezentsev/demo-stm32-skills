@@ -5,7 +5,7 @@ license: MIT
 compatibility: Windows с Python 3.8+, OpenOCD и ST-Link; WSL2 (Ubuntu) с ROS Noetic и socat; WSL в режиме mirrored networking, чтобы обращаться к службам Windows по 127.0.0.1; счётчик времени ядра WSL должен быть исправен (см. раздел про время)
 metadata:
   author: Viacheslav Mezentsev
-  version: "1.1.0"
+  version: "1.2.0"
   kind: diagnostic-channel
   transports: swd-openocd, uart-rosserial
   formats: rosbag2-ros1, mcap
@@ -49,7 +49,14 @@ python scripts/ros1_channel.py --cleanup                # остановить �
 
 Параметры: `--via openocd|rosserial|both`, `--record none|bag|mcap`, `--out ИМЯ`,
 `--topics all|a,b,c`, `--seconds N`, `--compress none|bz2`, `--chunk-size N`, `--keep`, `--cleanup`,
-`--elf ПУТЬ`, `--profile F411|G474`, `--port COM7`, `--baud 460800`, `--tcp 7777`, `--pty /dev/ttyVirtual0`.
+`--elf ПУТЬ`, `--profile F411|G474`, `--port COMx`, `--baud 460800`, `--tcp 7777`, `--pty /dev/ttyVirtual0`.
+
+Запускать из корня проекта прошивки (или задать `ROS1_PROJECT_ROOT`): от него ищутся ELF
+(`--elf`, по умолчанию `$FIRMWARE_ELF` или `build/firmware.elf`), SVD (`resources/STM32<профиль>.svd`)
+и журналы. Порт маршрута B — `--port` или `ROS1_SERIAL_PORT`; пример `tcp_serial_redirect.py` из
+pyserial — в `tools/scripts/` проекта или по пути `ROS1_TCP_SERIAL_REDIRECT`. Для `resolve_addresses.py`
+и `svd_lookup.py` SVD задаётся `--svd` или `STM32_SVD`, GDB с Python — из `PATH`, `GDB` или
+`STM32_TOOLCHAIN_PATH`.
 
 При `--via both` маршрут A публикуется в дерево `/swd/...`, чтобы имена не совпали с rosserial-топиками.
 

@@ -1,7 +1,7 @@
 """Разрешение имён из SVD (CMSIS System View Description) в адреса.
 
 ЗАЧЕМ. Для маршрута через OpenOCD читать можно не только переменные прошивки, но и **регистры
-периферии**, а их имена удобнее брать из SVD, который и так лежит в проекте (`resources/*.svd`), чем
+периферии**, а их имена удобнее брать из SVD-файла MCU (например, `resources/*.svd` проекта), чем
 держать в голове сырые адреса.
 
 СИНТАКСИС (используется в `fields.toml` как `expr = "svd:..."`):
@@ -15,14 +15,15 @@
     если поле не указано)
 
 Проверка: `python svd_lookup.py ADC1.DR --svd resources/STM32F411.svd`.
+SVD по умолчанию — из переменной окружения STM32_SVD.
 """
 import argparse
+import os
 import pathlib
 import sys
 import xml.etree.ElementTree as ElementTree
 
-ROOT = pathlib.Path(__file__).resolve().parents[3]
-DEFAULT_SVD = ROOT / "resources" / "STM32F411.svd"
+DEFAULT_SVD = os.environ.get("STM32_SVD")
 
 
 class SvdLookup:
@@ -89,8 +90,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("path", help="имя вида ADC1.DR или ADC1.SR.EOC")
-    parser.add_argument("--svd", default=str(DEFAULT_SVD))
+    parser.add_argument("--svd", default=DEFAULT_SVD, help="SVD-файл MCU (по умолчанию $STM32_SVD)")
     args = parser.parse_args()
+    if not args.svd:
+        parser.error("укажите --svd или переменную окружения STM32_SVD")
 
     lookup = SvdLookup(args.svd)
     address, size, shift, mask = lookup.resolve(args.path)

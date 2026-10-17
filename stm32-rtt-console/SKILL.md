@@ -5,7 +5,7 @@ license: MIT
 compatibility: STM32 с SWD-отладчиком и OpenOCD 0.11+; управляющий блок RTT в памяти цели либо инъекция блока в свободную SRAM
 metadata:
   author: Viacheslav Mezentsev
-  version: "1.0.0"
+  version: "1.0.1"
   workflow: исследование → навык → проект
 allowed-tools: Bash Read Write Edit Glob Grep
 ---
@@ -47,22 +47,22 @@ python scripts/run_retval_hook.py --symbol <symbol> --seconds 10
 ## Файлы навыка
 
 ```
-scripts\build_block.py
-scripts\check_rtt_support.sh
-scripts\hook\build_hook_image.py
-scripts\hook\hook.S
-scripts\hook\retval_hook.S
-scripts\hook\run_bp_hook.py
-scripts\hook\run_hook.py
-scripts\hook\run_retval_hook.py
-scripts\hook\run_timer_hook.py
-scripts\hook\run_vector_hook.py
-scripts\hook\timer_hook.S
-scripts\hook\vector_hook.S
-scripts\rtt_help.sh
-scripts\rtt_read.sh
-scripts\run_live.py
-scripts\run_poc.py
-scripts\run_running.py
-scripts\start_openocd.sh
+scripts/build_block.py
+scripts/check_rtt_support.sh
+scripts/hook/build_hook_image.py
+scripts/hook/hook.S
+scripts/hook/retval_hook.S
+scripts/hook/run_bp_hook.py
+scripts/hook/run_hook.py
+scripts/hook/run_retval_hook.py
+scripts/hook/run_timer_hook.py
+scripts/hook/run_vector_hook.py
+scripts/hook/timer_hook.S
+scripts/hook/vector_hook.S
+scripts/rtt_help.sh
+scripts/rtt_read.sh
+scripts/run_live.py
+scripts/run_poc.py
+scripts/run_running.py
+scripts/start_openocd.sh
 ```
