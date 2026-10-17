@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Сборка и локальные файлы (allowed-signers и т. п., см. HOWTO)
+build/
+*.local.toml
+
+# Прошивки и артефакты сборки
+*.hex
+*.bin
+*.elf
+*.map
+
+# Логи, записи и резервные копии
+*.log
+*.sr
+*.bak
+*.orig
+*~
+
+# Среда
+.DS_Store
+Thumbs.db

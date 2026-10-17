@@ -1,0 +1,7 @@
+# В репозитории всегда LF; в рабочей копии Windows допускается CRLF (core.autocrlf=true).
+* text=auto
+
+# Файлы, которые должны оставаться LF и в рабочей копии.
+*.sh          text eol=lf
+*.S           text eol=lf
+.github/**    text eol=lf
