@@ -1,6 +1,10 @@
 ---
 name: stm32-vscode-cmake-scaffold
-description: Создает базовую структуру окружения VS Code, CMake и GCC+Ninja для STM32 проектов, сгенерированных в CubeMX (Makefile). Поддерживает серии F0, F1, F4, F7. Настраивает отладку (OpenOCD, JLink, PyOCD, ST-Link, QEMU) и автоматически ищет локальный ARM GCC тулчейн.
+description: Создаёт базовую структуру окружения VS Code, CMake и GCC + Ninja для проектов STM32, сгенерированных в CubeMX (Makefile). Поддерживает серии F0, F1, F4, F7. Настраивает отладку (OpenOCD, J-Link, pyOCD, ST-Link, QEMU) и автоматически ищет локальный тулчейн ARM GCC. Использовать, когда проект CubeMX нужно открыть и собирать в VS Code через CMake.
+license: MIT
+metadata:
+  author: Viacheslav Mezentsev
+  version: "0.1"
 ---
 
 # Генерация окружения STM32 для VS Code & CMake

@@ -1,17 +1,10 @@
 ---
 name: demo-stm32-cmake-example-builder
-description: >
-  Создаёт нумерованные демо-примеры для репозитория demo-stm32-cmake
-  (github.com/ViacheslavMezentsev/demo-stm32-cmake). Применяется после того,
-  как пользователь сгенерировал базовый код в STM32CubeMX. Формирует все файлы
-  проекта: CMakeLists.txt, stm32_config.yml, .vscode, линкер-скрипт .ld.in,
-  program.cpp и вносит правки в main.h/main.c. Активировать при словах
-  "новый пример", "создай проект STM32", "demo-stm32-cmake", "07-pwm" и подобных.
+description: 'Создаёт нумерованные демо-примеры для репозитория demo-stm32-cmake (github.com/ViacheslavMezentsev/demo-stm32-cmake). Применяется после того, как пользователь сгенерировал базовый код в STM32CubeMX. Формирует все файлы проекта: CMakeLists.txt, stm32_config.yml, .vscode, линкер-скрипт .ld.in, program.cpp и вносит правки в main.h/main.c. Активировать при словах "новый пример", "создай проект STM32", "demo-stm32-cmake", "07-pwm" и подобных.'
 license: MIT
-compatibility: >
-  Репозиторий demo-stm32-cmake с подмодулями stm32-cmake и stm32-cmake-yml.
-  Требует STM32CubeMX для генерации начального кода.
+compatibility: Репозиторий demo-stm32-cmake с подмодулями stm32-cmake и stm32-cmake-yml. Требует STM32CubeMX для генерации начального кода.
 metadata:
+  author: Viacheslav Mezentsev
   version: "0.3"
   repository: https://github.com/ViacheslavMezentsev/demo-stm32-skills
 ---
@@ -214,7 +207,7 @@ https://github.com/modm-io/cmsis-svd-stm32/blob/main/stm32<family>/STM32<CHIP>.s
 ### 3.7. `.vscode/`
 
 Все файлы кроме `settings.json` идентичны для всех примеров.
-Шаблоны — в [assets/vscode/](assets/vscode/).
+Шаблоны — в [references/VSCODE.md](references/VSCODE.md).
 
 `settings.json` специфичен для каждого проекта. Подставить:
 - `<MCU_DEVICE>` — например `STM32F411CEU6`

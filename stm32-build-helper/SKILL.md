@@ -1,7 +1,10 @@
 ---
 name: stm32-build-helper
-description: Помощь в сборке проекта, интерпретация ошибок CMake/GCC и отладка проблем конфигурации, специфичных для фреймворка stm32-cmake-yml.
+description: Помощь в сборке проекта STM32, интерпретация ошибок CMake, GCC и линкера и отладка проблем конфигурации, специфичных для фреймворка stm32-cmake-yml. Использовать, когда сборка падает с ошибкой, не находится hal_conf.h или Reset_Handler, прошивка уходит в HardFault сразу после старта или нужно проверить фактические флаги компиляции цели.
 license: MIT
+metadata:
+  author: Viacheslav Mezentsev
+  version: "0.1"
 allowed-tools: Bash
 ---
 

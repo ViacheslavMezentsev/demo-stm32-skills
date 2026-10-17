@@ -1,15 +1,16 @@
 ---
-name: "stm32-ros-alt-channel"
-description: "Вывод данных прошивки STM32 в ROS1 без её изменения и без занятия UART: нода читает переменные и регистры из RAM по SWD через OpenOCD (команда mdw) либо берёт штатные топики rosserial по UART, и публикует их в ROS-графе внутри WSL; запись в rosbag или MCAP своим писателем на стандартной библиотеке, адреса считаются автоматически по ELF и SVD. Применяй, когда нужен диагностический канал: свои поля, регистры периферии, запись файлов без установки ROS под Windows, просмотр через rostopic и PlotJuggler."
-license: "BSD-3-Clause"
-compatibility: "Windows с Python 3.8+, OpenOCD и ST-Link; WSL2 (Ubuntu) с ROS Noetic и socat; WSL в режиме mirrored networking, чтобы обращаться к службам Windows по 127.0.0.1; счётчик времени ядра WSL должен быть исправен (см. раздел про время)"
+name: stm32-ros-alt-channel
+description: 'Вывод данных прошивки STM32 в ROS1 без её изменения и без занятия UART: нода читает переменные и регистры из RAM по SWD через OpenOCD (команда mdw) либо берёт штатные топики rosserial по UART, и публикует их в ROS-графе внутри WSL; запись в rosbag или MCAP своим писателем на стандартной библиотеке, адреса считаются автоматически по ELF и SVD. Применяй, когда нужен диагностический канал: свои поля, регистры периферии, запись файлов без установки ROS под Windows, просмотр через rostopic и PlotJuggler.'
+license: MIT
+compatibility: Windows с Python 3.8+, OpenOCD и ST-Link; WSL2 (Ubuntu) с ROS Noetic и socat; WSL в режиме mirrored networking, чтобы обращаться к службам Windows по 127.0.0.1; счётчик времени ядра WSL должен быть исправен (см. раздел про время)
 metadata:
+  author: Viacheslav Mezentsev
   version: "1.1.0"
-  kind: "diagnostic-channel"
-  transports: "swd-openocd, uart-rosserial"
-  formats: "rosbag2-ros1, mcap"
-  tools: "python3, openocd, socat, rosrun, mcap"
-allowed-tools: "Bash Read Write Edit Glob Grep"
+  kind: diagnostic-channel
+  transports: swd-openocd, uart-rosserial
+  formats: rosbag2-ros1, mcap
+  tools: python3, openocd, socat, rosrun, mcap
+allowed-tools: Bash Read Write Edit Glob Grep
 ---
 
 # Канал «прошивка STM32 → ROS1»: два маршрута, запись bag/MCAP

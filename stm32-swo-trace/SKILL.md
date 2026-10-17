@@ -1,10 +1,11 @@
 ---
 name: stm32-swo-trace
-description: 'Трассировка SWO/ITM и счётчики DWT для STM32 через OpenOCD и ST-Link: проверка того, что вывод SWO свободен в конфигурации MCU и профиле, настройка TPIU/ITM, приём потока на хосте, профилирование участков по DWT. Обязательно проверять конфигурацию MCU для каждого профиля и совместимость отладчика до включения трассировки.'
-license: BSD-3-Clause
-compatibility: STM32 с выводом SWO (у F411 это PB3, у нас занят INITIATOR_ONOFF) и OpenOCD с поддержкой ITM/DWT
+description: 'Трассировка SWO/ITM и счётчики DWT для STM32 через OpenOCD и ST-Link: проверка того, что вывод SWO свободен в конфигурации MCU и профиле, настройка TPIU/ITM, приём потока на хосте, профилирование участков по DWT. Использовать для вывода printf через ITM и измерения времени выполнения; перед включением обязательно проверять конфигурацию MCU для каждого профиля и совместимость отладчика.'
+license: MIT
+compatibility: STM32 с выводом SWO (для F411 это PB3, проверить, что он не занят в проекте) и OpenOCD с поддержкой ITM/DWT
 metadata:
-  version: 1.0.0
+  author: Viacheslav Mezentsev
+  version: "1.0.0"
   workflow: исследование → навык → проект
 allowed-tools: Bash Read Write Edit Glob Grep
 ---

@@ -1,21 +1,15 @@
 ---
 name: stm32-cubemx-codegen
-description: >
-  Автоматизирует запуск STM32CubeMX в режиме командной строки для генерации
-  файлов проекта из существующего .ioc файла. Применяется когда нужно
-  сгенерировать или регенерировать дерево файлов проекта STM32 без открытия
-  GUI CubeMX. Активировать при словах "сгенерировать проект", "запустить CubeMX",
-  "regenerate", "generate code", "ioc файл".
+description: Автоматизирует запуск STM32CubeMX в режиме командной строки для генерации файлов проекта из существующего .ioc файла. Применяется когда нужно сгенерировать или регенерировать дерево файлов проекта STM32 без открытия GUI CubeMX. Активировать при словах "сгенерировать проект", "запустить CubeMX", "regenerate", "generate code", "ioc файл".
 license: MIT
-compatibility: >
-  Требует установленного STM32CubeMX (6.x+) и Java (входит в состав CubeMX).
-  Windows: java.exe в составе CubeMX. Linux/macOS: STM32CubeMX в PATH.
+compatibility: 'Требует установленного STM32CubeMX (6.x+) и Java (входит в состав CubeMX). Windows: java.exe в составе CubeMX. Linux/macOS: STM32CubeMX в PATH.'
 metadata:
+  author: Viacheslav Mezentsev
   version: "0.1"
   manual: UM1718
 ---
 
-# stm32cubemx-codegen
+# stm32-cubemx-codegen
 
 ## Принцип работы
 
@@ -23,7 +17,7 @@ STM32CubeMX поддерживает режим командной строки 
 с командами, выполняет их без GUI и завершается. Это позволяет агенту
 сформировать скрипт, запустить CubeMX и получить готовое дерево файлов проекта.
 
-Полный справочник команд — в [references/COMMANDS.md](references/COMMANDS.md).
+Полный справочник команд режима командной строки — в руководстве ST UM1718 (раздел о запуске STM32CubeMX из командной строки).
 
 ---
 

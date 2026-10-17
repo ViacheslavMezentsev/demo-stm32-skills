@@ -4,6 +4,7 @@ description: Применяет настройки форматирования 
 license: MIT
 compatibility: Требуется clang-format 16+ (из-за SeparateDefinitionBlocks). Минимум 14 при удалении этого параметра. Стандарт парсинга C++11.
 metadata:
+  author: Viacheslav Mezentsev
   version: "0.5"
   style: Custom (140 cols, 4 spaces, spaces in parentheses)
 ---

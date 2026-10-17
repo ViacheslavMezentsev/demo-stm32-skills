@@ -1,10 +1,11 @@
 ---
 name: weact-logic-analyzer
 description: Логический анализатор WeAct LogicAnalyzerV1 (FX2, 8 каналов, 24 МГц) на Linux через sigrok-cli — проверка наличия, права, запись, обёртка weact_la.py и типовые измерения для STM32 (ISR, PWM, UART, I2C, SPI, старт, джиттер). Плюс работа на удалённом стенде по SSH (прибор занят PulseView, разные версии Python) и поиск начала обмена, когда момент события зависит от сценария под отладчиком (окно записи, гейт по разрешающему сигналу, лог прошивки как опора времени).
-license: BSD-3-Clause
+license: MIT
 compatibility: логический анализатор Saleae-совместимый (в том числе WeAct) и sigrok/PulseView на стенде
 metadata:
-  version: 1.0.0
+  author: Viacheslav Mezentsev
+  version: "1.0.0"
   workflow: исследование → навык → проект
 allowed-tools: Bash Read Write Edit Glob Grep
 ---

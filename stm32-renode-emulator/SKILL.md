@@ -1,10 +1,11 @@
 ---
 name: stm32-renode-emulator
 description: 'Локальная песочница Renode 1.17 для прошивки STM32: прогон лога загрузки G474 без платы, проверка стартового лога, версионная совместимость макета (1.16.1 против 1.17), ограничения заглушек периферии. Использовать для быстрой проверки гипотез до аппаратного опыта и как источник эмуляционных артефактов.'
-license: BSD-3-Clause
+license: MIT
 compatibility: Renode 1.17 (основной; 1.16 — только совместимость), ELF прошивки и .resc-скрипт периферии; стенд не требуется
 metadata:
-  version: 1.0.0
+  author: Viacheslav Mezentsev
+  version: "1.0.0"
   workflow: исследование → навык → проект
 allowed-tools: Bash Read Write Edit Glob Grep
 ---

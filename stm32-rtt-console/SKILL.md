@@ -1,10 +1,11 @@
 ---
 name: stm32-rtt-console
-description: 'Real-Time Transfer (RTT) через OpenOCD и ST-Link: быстрый двусторонний канал обмена с прошивкой поверх SWD, без занятия UART и с сохранением скорости отладки. Команды rtt setup/start/server, проверка совместимости (поддержка в OpenOCD, буферы в прошивке, отсутствие конфликта с занятым отладчиком) и требования к проекту перед включением.'
-license: BSD-3-Clause
-compatibility: STM32 с SWD-отладчиком и OpenOCD 0.11+ (у нас 0.12.0+dev); управляющий блок RTT в памяти цели либо инъекция блока в свободную SRAM
+description: 'Real-Time Transfer (RTT) через OpenOCD и ST-Link: быстрый двусторонний канал обмена с прошивкой поверх SWD без занятия UART и с сохранением скорости отладки. Команды rtt setup/start/server, проверка совместимости (поддержка в OpenOCD, буферы в прошивке, отсутствие конфликта с занятым отладчиком) и требования к проекту перед включением. Использовать, когда нужен лог или консоль прошивки без свободного UART.'
+license: MIT
+compatibility: STM32 с SWD-отладчиком и OpenOCD 0.11+; управляющий блок RTT в памяти цели либо инъекция блока в свободную SRAM
 metadata:
-  version: 1.0.0
+  author: Viacheslav Mezentsev
+  version: "1.0.0"
   workflow: исследование → навык → проект
 allowed-tools: Bash Read Write Edit Glob Grep
 ---
