@@ -1,189 +1,105 @@
-# 🛠️ demo-stm32-skills
+# demo-stm32-skills
 
-Набор примеров навыков (Agent Skills) для ИИ-ассистентов, помогающих в разработке под микроконтроллеры STM32.
+Набор навыков (Agent Skills) для ИИ-ассистентов, помогающих в разработке под STM32 и совместимые микроконтроллеры: настройка сборки, генерация кода, архитектура прошивок, отладка и диагностика.
 
-> ⚠️ **Внимание**: Это демонстрационный репозиторий с примерами. Навыки могут требовать адаптации под ваш конкретный проект из-за специализации на фреймворке `stm32-cmake-yml`.
+Все навыки оформлены по [спецификации Agent Skills](https://agentskills.io/specification) и подходят для Claude Code, Cursor, Codex и других агентов, поддерживающих этот формат.
 
-## 📋 Описание
+Репозиторий демонстрационный: часть навыков привязана к фреймворку [stm32-cmake-yml](https://github.com/ViacheslavMezentsev/stm32-cmake-yml) и может потребовать адаптации под ваш проект.
 
-Этот репозиторий содержит готовые шаблоны навыков в формате [Agent Skills](https://agentskills.io/), которые помогают ИИ-ассистентам (Claude Code, Cursor, Windsurf и др.) эффективно работать с проектами STM32.
+## Навыки
 
-Каждый навык — это отдельная папка с файлом `SKILL.md`, который описывает:
-- **Что делает навык** и когда его использовать
-- **Пошаговые инструкции** для выполнения задач
-- **Примеры кода** и конфигураций
-- **Частые ошибки** и способы их решения
+### Сборка и структура проекта
 
-## 🎯 Доступные Навыки
+| Навык | Назначение |
+|-------|------------|
+| [stm32-config-manager](stm32-config-manager/) | Настройка проекта через `stm32_config.yml`: MCU, HAL/CMSIS, FreeRTOS, линковка, CRC |
+| [stm32-module-creator](stm32-module-creator/) | Создание библиотек-модулей с наследованием флагов компиляции |
+| [stm32-simple-sources](stm32-simple-sources/) | Подключение исходников (код CubeMX, системные файлы) напрямую к основной цели |
+| [stm32-build-helper](stm32-build-helper/) | Разбор ошибок CMake, GCC и линкера |
+| [stm32-cubemx-codegen](stm32-cubemx-codegen/) | Генерация проекта из `.ioc` через STM32CubeMX в режиме командной строки |
+| [stm32-vscode-cmake-scaffold](stm32-vscode-cmake-scaffold/) | Окружение VS Code + CMake + Ninja для проекта CubeMX |
+| [demo-stm32-cmake-example-builder](demo-stm32-cmake-example-builder/) | Нумерованные примеры для репозитория demo-stm32-cmake |
+| [stm32-arduino-cmake-architecture](stm32-arduino-cmake-architecture/) | Прошивки на Arduino Core со сборкой через CMake |
 
-| Навык | Описание | Когда Использовать |
-|-------|----------|-------------------|
-| [`stm32-config-manager`](./stm32-config-manager/) | Управление `stm32_config.yml` | Настройка MCU, драйверов, FreeRTOS, линковки |
-| [`stm32-simple-sources`](./stm32-simple-sources/) | Подключение исходников напрямую | CubeMX-код, системные файлы, простые модули |
-| [`stm32-build-helper`](./stm32-build-helper/) | Диагностика ошибок сборки | Интерпретация ошибок CMake/GCC, отладка |
-| [`stm32-bsp-driver-pattern`](./stm32-bsp-driver-pattern/) | Шаблон BSP-драйверов | Создание драйверов датчиков/микросхем в стиле ST |
-| [`stm32-module-creator`](./stm32-module-creator/) | Создание библиотек-модулей | Переиспользуемые компоненты с собственными зависимостями |
+### Архитектура и код
 
-## 📦 Установка
+| Навык | Назначение |
+|-------|------------|
+| [stm32-hard-realtime-architecture](stm32-hard-realtime-architecture/) | Паттерны Hard Real-Time на C++17 и ETL |
+| [stm32-bsp-driver-pattern](stm32-bsp-driver-pattern/) | Драйверы внешних микросхем в стиле BSP от ST |
+| [stm32-acoustic-modem-morse](stm32-acoustic-modem-morse/) | Передача диагностики через зуммер (OOK Morse) и декодер на Python |
+| [cpp-clang-format](cpp-clang-format/) | Единый стиль кода C/C++ через `.clang-format` |
 
-### Вариант 1: Клонирование в папку `skills`
+### Отладка и диагностика
 
-Если ваш проект уже использует Agent Skills, скопируйте навыки в папку `skills`:
+| Навык | Назначение |
+|-------|------------|
+| [stm32-rtt-console](stm32-rtt-console/) | Консоль RTT через OpenOCD и ST-Link без занятия UART |
+| [stm32-swo-trace](stm32-swo-trace/) | Трассировка SWO/ITM и профилирование по DWT |
+| [stm32-ros-alt-channel](stm32-ros-alt-channel/) | Вывод переменных и регистров в ROS1 по SWD или rosserial |
+| [stm32-renode-emulator](stm32-renode-emulator/) | Проверка прошивки в эмуляторе Renode без платы |
+| [weact-logic-analyzer](weact-logic-analyzer/) | Измерения логическим анализатором WeAct через sigrok-cli |
+
+### Документация и процесс
+
+| Навык | Назначение |
+|-------|------------|
+| [embedded-tech-spec](embedded-tech-spec/) | Техническое задание на модуль прошивки с требованиями и тест-кейсами |
+| [ap-patch-generation](ap-patch-generation/) | Патчи в формате AP для чатов без доступа к файловой системе |
+
+## Установка
+
+Скопируйте нужные папки навыков туда, где их ищет ваш агент. Для Claude Code это `.claude/skills/` в проекте или `~/.claude/skills/` для всех проектов:
 
 ```bash
-# Клонирование репозитория
-git clone https://github.com/your-username/demo-stm32-skills.git
-
-# Копирование нужных навыков в ваш проект
-cp -r demo-stm32-skills/stm32-config-manager ~/your-project/skills/
-cp -r demo-stm32-skills/stm32-simple-sources ~/your-project/skills/
-cp -r demo-stm32-skills/stm32-build-helper ~/your-project/skills/
+git clone https://github.com/ViacheslavMezentsev/demo-stm32-skills.git
+cp -r demo-stm32-skills/stm32-config-manager your-project/.claude/skills/
 ```
 
-### Вариант 2: Использование как подмодуль
+Либо подключите репозиторий целиком как подмодуль:
 
 ```bash
-# Добавление как git submodule
-git submodule add https://github.com/your-username/demo-stm32-skills.git skills/stm32
-
-# Или копирование отдельных навыков
-git clone https://github.com/your-username/demo-stm32-skills.git temp-skills
-mv temp-skills/stm32-config-manager skills/
+git submodule add https://github.com/ViacheslavMezentsev/demo-stm32-skills.git .claude/skills/stm32
 ```
 
-### Вариант 3: Создание своего набора на основе примеров
+## Формат навыка
 
-1. Создайте папку для навыков в вашем проекте:
-   ```bash
-   mkdir -p skills/stm32
-   ```
-
-1. Скопируйте структуру из этого репозитория:
-   ```bash
-   cp -r demo-stm32-skills/stm32-config-manager skills/stm32/
-   ```
-
-1. Адаптируйте `SKILL.md` под ваши нужды (измените пути, имена файлов, специфичные настройки)
-
-## 🔧 Как Создать Свой Навык (на примере stm32-bsp-driver-pattern)
-
-### Шаг 1: Изучите Спецификацию Agent Skills
-
-Ознакомьтесь с форматом навыков в официальной документации:
-- [Что такое Agent Skills](https://agentskills.io/what-are-skills)
-- [Спецификация к SKILL.md](https://agentskills.io/specification)
-
-**Ключевые требования:**
-- Файл `SKILL.md` должен содержать YAML frontmatter + Markdown
-- Имя навыка: только lowercase, цифры и дефисы (1-64 символа)
-- Описание: 1-1024 символов, должно объяснять что делает навык и когда использовать
-
-### Шаг 2: Возьмите За Основу Существующий Навык
-
-Например, для создания драйвера устройства:
-
-1. Откройте [`stm32-bsp-driver-pattern/SKILL.md`](./stm32-bsp-driver-pattern/SKILL.md)
-2. Изучите структуру:
-   - Архитектурные принципы (разделение уровней)
-   - Обязательные файлы (`{device}.h`, `{device}.c`, `{device}_io.h`, `{device}_io.c`)
-   - Шаблоны кода для I2C/SPI
-
-### Шаг 3: Подготовьте Референсные Материалы
-
-Для формирования качественного навыка соберите:
-
-| Материал | Источник | Назначение |
-| --- | --- | --- |
-| Datasheet устройства | Сайт производителя | Карта регистров, биты, последовательности |
-| Примеры драйверов | [STM32CubeF4](https://github.com/STMicroelectronics/STM32CubeF4) | Образец BSP-структуры |
-| Ваша схема подключения | Ваш проект | Конкретный интерфейс (I2C/SPI/UART) |
-
-**Пример запроса к ИИ-ассистенту:**
-
-```
-Используя навык stm32-bsp-driver-pattern, создай драйвер для датчика температуры 
-TMP102 по datasheet. Интерфейс подключения: I2C1 (SCL=PB6, SDA=PB7).
-
-Материалы:
-- datasheet/TMP102.pdf
-- Drivers/BSP/Components/lm75/ (пример от ST)
-- Моя конфигурация в stm32_config.yml
-
-Требуется:
-1. Сгенерировать tmp102.h с картой регистров
-2. Сгенерировать tmp102.c с функциями инициализации и чтения
-3. Сгенерировать tmp102_io.c для I2C1
-4. Обновить stm32_config.yml для подключения драйвера
-```
-
-### Шаг 4: Протестируйте Навык
-
-1. Поместите созданный навык в папку `skills/` вашего проекта
-2. Активируйте навык в вашем ИИ-ассистенте
-3. Выполните тестовую задачу (например, "Добавь поддержку нового датчика")
-4. Проверьте, что сгенерированный код компилируется
-
-### Шаг 5: Адаптируйте Под Свой Проект
-
-| Элемент | Что Проверить |
-|---------|--------------|
-| Пути к файлам | Соответствуют ли вашей структуре папок? |
-| Имена MCU | Правильные ли part number в примерах? |
-| Версии фреймворка | Актуальная ли `stm32_cmake_yml_version`? |
-| Компилятор | Те же ли флаги (`-Og`, `-std=gnu17`)? |
-
-## 📚 Структура Файла SKILL.md
-
-Каждый навык следует формату Agent Skills:
+Каждый навык — папка с файлом `SKILL.md` и, при необходимости, подпапками `scripts/`, `references/` и `assets/`. Заголовок `SKILL.md` во всех навыках репозитория единообразен:
 
 ```yaml
 ---
-name: skill-name
-description: Краткое описание (1-1024 символов)
+name: stm32-example            # совпадает с именем папки; a-z, 0-9 и дефисы, до 64 символов
+description: Что делает навык и когда его использовать (до 1024 символов).
 license: MIT
-compatibility: Требуется фреймворк stm32-cmake-yml
-meta
-  version: "0.1"
-  author: your-name
+compatibility: Требуемые инструменты и окружение (необязательно, до 500 символов).
+metadata:
+  author: Viacheslav Mezentsev
+  version: "1.0"
+allowed-tools: Bash Read Write Edit   # необязательно
 ---
-
-# Заголовок навыка
-
-## Описание
-Что делает этот навык и когда его использовать.
-
-## Рабочий Процесс
-Пошаговые инструкции.
-
-## Примеры
-Примеры кода и конфигураций.
-
-## Частые Ошибки
-Таблица с ошибками и решениями.
 ```
 
-## 🔗 Полезные Ссылки
+Дополнительные сведения (версия, теги, ссылки) помещаются в `metadata` как строки, а не в отдельные поля верхнего уровня. Объём `SKILL.md` желательно держать в пределах 500 строк, вынося подробности в `references/`.
 
-- [Спецификация Agent Skills](https://agentskills.io/specification)
-- [Фреймворк stm32-cmake-yml](https://github.com/ViacheslavMezentsev/stm32-cmake-yml)
-- [STM32Cube_FW Примеры](https://github.com/STMicroelectronics/STM32CubeF4/tree/master/Drivers/BSP/Components)
-- [Документация STM32](https://www.st.com/en/microcontrollers-microprocessors/stm32-mainstream-mcus.html)
+Проверить навык на соответствие спецификации можно утилитой [skills-ref](https://github.com/agentskills/agentskills/tree/main/skills-ref):
 
-## ⚠️ Ограничения
+```bash
+skills-ref validate ./stm32-config-manager
+```
 
-1. **Фреймворк**: Навыки заточены под `stm32-cmake-yml` версии 0.5+
-2. **Компилятор**: Предполагается `arm-none-eabi-gcc`
-3. **CubeMX**: Интеграция через `.ioc` файлы опциональна
-4. **RTOS**: FreeRTOS поддерживается, другие RTOS требуют адаптации
+## Ограничения
 
-## 🤝 Вклад
+- Навыки сборки рассчитаны на `stm32-cmake-yml` 0.5+ и `arm-none-eabi-gcc`.
+- Навыки отладки проверялись с OpenOCD и ST-Link; другие отладчики могут потребовать адаптации.
+- Из RTOS поддерживается FreeRTOS.
 
-Если вы улучшили навык или создали новый:
+## Участие
 
-1. Создайте fork репозитория
-2. Внесите изменения в отдельную ветку
-3. Отправьте Pull Request с описанием изменений
+Исправления и новые навыки принимаются через pull request из fork. Правила — в [AGENTS.md](AGENTS.md):
+коммиты в формате Conventional Commits на английском, подписанные ключом, зарегистрированным в GitHub;
+навык должен проходить `skills-ref validate` (то же проверяет CI). Изменения отмечайте в разделе
+Unreleased файла [CHANGELOG.md](CHANGELOG.md).
 
-## 📄 Лицензия
+## Лицензия
 
-MIT License — см. файл [LICENSE](./LICENSE)
+[MIT](LICENSE)
