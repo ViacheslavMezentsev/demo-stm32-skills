@@ -7,7 +7,8 @@
 
 [2026-10-18]
 
-- Все 19 навыков проходят `skills-ref validate`; заголовки единообразны, лицензия — MIT.
+- Все 19 навыков проходят `skills-ref validate`; заголовки единообразны, лицензия — MIT;
+  все SKILL.md не длиннее 500 строк.
 - Заведены правила (`AGENTS.md`, `CLAUDE.md`), памятки (`TODO.md`, `CHANGELOG.md`, `HOWTO.md`)
   и CI (`.github/workflows/skills.yml`), прошедший первый прогон на GitHub.
 - Агент работает в отдельном клоне `../.work` и подписывает коммиты своим ключом;
@@ -17,8 +18,6 @@
 
 ## Ближайшие шаги
 
-- [ ] **Сократить stm32-bsp-driver-pattern** (775 строк при рекомендованных 500): вынести шаблоны кода
-      и примеры в `references/`.
 - [ ] **Проверка практических навыков на отладочных стендах.** Выполняется на типовых отладках для STM32:
       stm32-rtt-console, stm32-swo-trace, stm32-ros-alt-channel, stm32-renode-emulator (без платы),
       weact-logic-analyzer, stm32-cubemx-codegen.
