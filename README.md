@@ -87,6 +87,21 @@ allowed-tools: Bash Read Write Edit   # необязательно
 skills-ref validate ./stm32-config-manager
 ```
 
+## Проверки
+
+CI (workflow Skills) проверяет не только формат навыков, но и их комплекты:
+
+- **Validate** — `skills-ref validate` для каждого навыка;
+- **Kits** — скрипты компилируются, assets загружаются, самопроверки навыков проходят
+  (embedded-tech-spec, weact-logic-analyzer на синтетических сигналах, renode_compat);
+- **Emulation** — минимальная прошивка собирается тулчейн-файлом stm32-vscode-cmake-scaffold и
+  запускается в Renode 1.17 и QEMU навыком stm32-renode-emulator с проверкой стартового лога; макет
+  платформы сверяется с SVD, а stm32-ros-alt-channel находит адреса переменных прошивки и читает их
+  из работающего эмулятора.
+
+Навыки проверяют друг друга, но только в эмуляторе: аппаратную проверку на стенде это не заменяет.
+Локальный запуск — `python3 ci/run_checks.py kits emulation` ([HOWTO](HOWTO.md)).
+
 ## Ограничения
 
 - Навыки сборки рассчитаны на `stm32-cmake-yml` 0.5+ и `arm-none-eabi-gcc`.

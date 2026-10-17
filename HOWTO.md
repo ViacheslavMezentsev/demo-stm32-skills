@@ -8,6 +8,30 @@
 (Orange Pi, WSL). Команды git одинаковы в обеих, кроме кавычек (раздел «Псевдоним
 `git land`»).
 
+## Проверки CI локально
+
+Workflow Skills состоит из трёх заданий: Validate (`skills-ref`), Kits и Emulation. Два последних
+запускаются тем же скриптом, что и в CI (Linux или WSL, Python 3.11+):
+
+```sh
+python3 ci/run_checks.py kits                 # скрипты, assets, самопроверки навыков (без сети)
+python3 ci/run_checks.py emulation            # GCC и Renode 1.17 из ci/tools.lock.json, QEMU
+python3 ci/run_checks.py kits emulation --strict   # как в CI: SKIP считается ошибкой
+```
+
+Необязательные инструменты дают SKIP: `sigrok-cli`, `clang-format` ≥ 16, `qemu-system-arm`, GDB с
+Python (`gdb-multiarch` или `arm-none-eabi-gdb-py3`). Ubuntu: `sudo apt install sigrok-cli clang-format
+qemu-system-arm ninja-build gdb-multiarch`. Загрузки (`ci/fetch_tools.py`, около 170 МБ) кэшируются в
+`build/ci-tools` и проверяются по SHA-256; итог — `build/ci/summary.json`, журналы — `build/ci/*.log`.
+
+| Проблема | Решение |
+| --- | --- |
+| `SHA-256 mismatch` при загрузке | Файл повреждён или подменён: он уже удалён, повторить запуск; если повторяется — сверить `url` и `sha256` в `ci/tools.lock.json` |
+| Renode: `GDB server ... started`, но порт недоступен | В окружении нет IPv6 на loopback (часть песочниц и контейнеров); CI читает память монитором Renode, GDB-сервер для проверок не нужен |
+| Прогон QEMU заканчивается таймаутом | Прошивка не вызывает семихостинг `SYS_EXIT`: QEMU сам не останавливается |
+
+Эмуляция — не аппаратная проверка: PASS в Renode или QEMU подтверждает только работу в эмуляторе.
+
 ## Git: рабочий цикл без PR
 
 ### Локальная проверка SSH-подписи

@@ -1,0 +1,26 @@
+# Fields of the CI firmware for stm32-ros-alt-channel/scripts/resolve_addresses.py
+# (format: stm32-ros-alt-channel/scripts/fields.toml).
+
+[[field]]
+topic = "/ci/telemetry/counter"
+message = "std_msgs/UInt32"
+kind = "uint32"
+expr = "&telemetry_counter"
+
+[[field]]
+topic = "/ci/telemetry/state"
+message = "std_msgs/UInt32"
+kind = "uint32"
+expr = "&telemetry_state"
+
+[[field]]
+topic = "/ci/rcc/cr_hsion"
+message = "std_msgs/UInt32"
+kind = "uint32"
+expr = "svd:RCC.RCC_CR.HSION"
+
+[[field]]
+topic = "/ci/gpioa/odr"
+message = "std_msgs/UInt32"
+kind = "uint32"
+expr = "svd:GPIOA.ODR"

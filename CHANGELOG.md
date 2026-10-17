@@ -7,6 +7,13 @@
 
 ### Добавлено
 
+- Задания CI Kits и Emulation (`ci/run_checks.py`, закреплённые загрузки `ci/tools.lock.json`):
+  самопроверки комплектов навыков; прошивка `tests/firmware/boot-g474`, собранная тулчейн-файлом
+  stm32-vscode-cmake-scaffold, запускается в Renode 1.17 и QEMU через stm32-renode-emulator с проверкой
+  стартового лога; макет сверяется с SVD, stm32-ros-alt-channel разрешает адреса и читает память.
+- stm32-renode-emulator: макет `stm32g4_mock.repl`, сценарии `boot.resc` и `debug.resc`, проверка лога
+  `check_startup_log.py` и образец ожиданий — комплект теперь самодостаточен.
+
 - Правила работы для агентов и участников: `AGENTS.md`, `CLAUDE.md` (подключает `AGENTS.md`).
 - Памятки `TODO.md`, `CHANGELOG.md`, `HOWTO.md`.
 - Проверка навыков в CI (`.github/workflows/skills.yml`): `skills-ref validate` для каждого навыка
@@ -35,6 +42,14 @@
 - Сведения о конкретном стенде из поля `compatibility` в stm32-swo-trace и stm32-rtt-console.
 
 ### Исправлено
+
+- stm32-renode-emulator: `run.py` искал макет и проверку лога в каталогах исходного проекта; обрезанный
+  SKILL.md переписан (маршруты, прогон, проверка лога, версии Renode).
+- weact-logic-analyzer: восстановлено обрезанное тело SKILL.md (разделы 1–9).
+- stm32-ros-alt-channel: пути к SVD, ELF и корню проекта задаются аргументами и переменными окружения
+  вместо путей исследовательского проекта; убраны личный путь к тулчейну и порт `COM7` по умолчанию.
+- stm32-rtt-console: скрипты считают корнем проекта текущий каталог, а не каталог на 2–4 уровня выше;
+  убрана привязка к SRAM конкретного стенда.
 
 - Битая ссылка `assets/vscode/` в demo-stm32-cmake-example-builder (теперь `references/VSCODE.md`).
 - Ссылка на отсутствующий `references/COMMANDS.md` в stm32-cubemx-codegen (теперь отсылка к UM1718)

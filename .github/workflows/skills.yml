@@ -37,3 +37,63 @@ jobs:
             n=$(wc -l < "$f")
             [ "$n" -le 500 ] || echo "::warning file=$f::$n lines, recommended <= 500"
           done
+
+  kits:
+    name: Kits
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Tools for the self-tests
+        run: |
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get install -y --no-install-recommends sigrok-cli clang-format
+
+      - name: Scripts, assets and self-tests of the skill kits
+        run: python3 ci/run_checks.py kits --strict
+
+      - name: Keep results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kits-results
+          path: build/ci/
+          if-no-files-found: warn
+
+  emulation:
+    name: Emulation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: QEMU, Ninja and GDB with Python
+        run: |
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get install -y --no-install-recommends qemu-system-arm ninja-build gdb-multiarch
+
+      - name: Cache pinned downloads (verified by SHA-256 on use)
+        uses: actions/cache@v4
+        with:
+          path: build/ci-tools
+          key: ci-tools-${{ runner.os }}-${{ hashFiles('ci/tools.lock.json') }}
+
+      - name: Firmware, Renode 1.17 and QEMU runs, cross-checks between skills
+        run: python3 ci/run_checks.py emulation --strict
+
+      - name: Keep results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: emulation-results
+          path: build/ci/
+          if-no-files-found: warn
