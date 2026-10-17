@@ -102,6 +102,22 @@ git push -u origin claude/<задача>     # CI: дождаться зелён
 git land claude/<задача>
 ```
 
+Относительный путь `../.work` работает только из копии, рядом с которой лежит `.work`.
+Из WSL копия на диске Windows видна как `/mnt/d/…`, а `~/github/…` — это отдельная
+папка Linux; там путь указывают полностью (буква диска — своя):
+
+```sh
+git fetch /mnt/d/<папка с репозиториями>/.work/demo-stm32-skills claude/<задача>:claude/<задача>
+git -c gpg.ssh.allowedSignersFile=/mnt/d/<папка с репозиториями>/.work/keys/allowed_signers \
+    log --show-signature --oneline main..claude/<задача>
+```
+
+| Проблема | Решение |
+| --- | --- |
+| `'../.work/…' does not appear to be a git repository` | Команда запущена не из той копии (например, `~/github` в WSL вместо `/mnt/d/…`): `pwd`, затем полный путь к клону |
+| `detected dubious ownership in repository` (WSL, диск Windows) | `git config --global --add safe.directory <полный путь к клону>` |
+| `git switch` отказывается: локальные правки будут перезаписаны | Если те же правки уже в ветке агента: `git stash push -u`, переключиться, сверить, затем `git stash drop` |
+
 `fetch` переносит коммиты без изменений, вместе с подписями. Ветку с тем же именем
 в своей копии перед повторным приёмом обновляют тем же `fetch` (только перемотка;
 при расхождении — `+claude/<задача>:claude/<задача>`, если своих коммитов в ней нет).
