@@ -3,28 +3,36 @@
 #
 # Порядок принципиален: RTT настраивается ПОСЛЕ того, как блок появится в памяти (его создаёт инъекция
 # из GDB). Поэтому сервер поднимается без RTT, а команды `rtt setup/start` посылаются отдельно через
-# telnet — их выполняет `rtt_setup.sh` после инъекции.
+# telnet — их выполняет `rtt_read.sh` после инъекции.
 #
-# Параметры взяты из hil/F411/stands/remote.toml: интерфейс stlink, скорость 1000 кГц, серийник пробника.
-. "$HOME/.local/stm32-gdbtest/env.sh" 2>/dev/null
+# Параметры: интерфейс stlink, target stm32f4x, скорость 1000 кГц. Серийный номер пробника — первым
+# аргументом или в STLINK_SERIAL; без него OpenOCD берёт первый найденный ST-Link.
+#   sh start_openocd.sh [серийный номер] [gdb-порт] [telnet-порт] [каталог журнала]
+# Окружение стенда stm32-gdbtest подключается, если установлено.
+ENV_SH="$HOME/.local/stm32-gdbtest/env.sh"
+[ -f "$ENV_SH" ] && . "$ENV_SH"
 
-SERIAL="${1:-0670FF494849877187201419}"
+SERIAL="${1:-${STLINK_SERIAL:-}}"
 GDB_PORT="${2:-3333}"
 TELNET_PORT="${3:-4444}"
 LOG="${4:-/tmp/rtt-poc}"
 mkdir -p "$LOG"
 
-# Занят ли пробник другим сервером.
+# Занят ли пробник другим сервером (без серийного номера — любой OpenOCD этого пользователя).
 if pgrep -f "openocd.*$SERIAL" > /dev/null 2>&1; then
     echo "OpenOCD уже работает с этим пробником, останавливаю"
     pkill -f "openocd.*$SERIAL" 2>/dev/null
     sleep 1
 fi
 
+# Выбор пробника по серийному номеру (без номера — пустая команда Tcl).
+SERIAL_CMD="adapter serial $SERIAL"
+[ -n "$SERIAL" ] || SERIAL_CMD="#"
+
 echo "=== запуск OpenOCD ==="
 nohup openocd \
     -f interface/stlink.cfg \
-    -c "adapter serial $SERIAL" \
+    -c "$SERIAL_CMD" \
     -f target/stm32f4x.cfg \
     -c "adapter speed 1000" \
     -c "bindto 127.0.0.1" \

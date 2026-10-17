@@ -52,7 +52,7 @@ jobs:
       - name: Tools for the self-tests
         run: |
           sudo apt-get -o Acquire::Retries=3 update
-          sudo apt-get install -y --no-install-recommends sigrok-cli clang-format
+          sudo apt-get install -y --no-install-recommends sigrok-cli clang-format openocd
 
       - name: Scripts, assets and self-tests of the skill kits
         run: python3 ci/run_checks.py kits --strict

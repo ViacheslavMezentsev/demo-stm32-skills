@@ -19,9 +19,9 @@ python3 ci/run_checks.py emulation            # GCC и Renode 1.17 из ci/tools
 python3 ci/run_checks.py kits emulation --strict   # как в CI: SKIP считается ошибкой
 ```
 
-Необязательные инструменты дают SKIP: `sigrok-cli`, `clang-format` ≥ 16, `qemu-system-arm`, GDB с
+Необязательные инструменты дают SKIP: `sigrok-cli`, `clang-format` ≥ 16, `openocd`, `qemu-system-arm`, GDB с
 Python (`gdb-multiarch` или `arm-none-eabi-gdb-py3`). Ubuntu: `sudo apt install sigrok-cli clang-format
-qemu-system-arm ninja-build gdb-multiarch`. Загрузки (`ci/fetch_tools.py`, около 170 МБ) кэшируются в
+openocd qemu-system-arm ninja-build gdb-multiarch`. Загрузки (`ci/fetch_tools.py`, около 170 МБ) кэшируются в
 `build/ci-tools` и проверяются по SHA-256; итог — `build/ci/summary.json`, журналы — `build/ci/*.log`.
 
 | Проблема | Решение |

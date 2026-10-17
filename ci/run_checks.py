@@ -8,7 +8,8 @@
 kits       Python scripts compile, shell scripts parse, JSON/JSONC and TOML assets load,
            .clang-format assets are accepted by clang-format >= 16, embedded-tech-spec
            checks its own template and example, renode_compat converts the mock platform
-           both ways, weact-logic-analyzer self-test runs on synthetic signals (sigrok-cli).
+           both ways, weact-logic-analyzer self-test runs on synthetic signals (sigrok-cli),
+           OpenOCD offers the RTT commands that stm32-rtt-console uses.
 emulation  The CI firmware (tests/firmware/boot-g474) is built with the toolchain file of
            stm32-vscode-cmake-scaffold, run in Renode 1.17 by stm32-renode-emulator and its
            boot log verified; the same ELF runs in QEMU (profile F411) when qemu-system-arm
@@ -17,7 +18,7 @@ emulation  The CI firmware (tests/firmware/boot-g474) is built with the toolchai
            firmware fields from the ELF; the resolved RAM addresses are read twice from the
            running core in Renode and must show a changing counter.
 
-A missing optional tool (sigrok-cli, clang-format, qemu-system-arm, GDB with Python) gives
+A missing optional tool (sigrok-cli, clang-format, openocd, qemu-system-arm, GDB with Python) gives
 SKIP; with --strict it is a failure. Results: build/ci/summary.json, logs: build/ci/*.log.
 Emulator results prove behaviour in the emulator only, not on hardware.
 """
@@ -207,6 +208,25 @@ def check_weact():
     return text.strip().splitlines()[-1] if text.strip() else "ok"
 
 
+def check_openocd_rtt():
+    tool = shutil.which("openocd")
+    if not tool:
+        raise Skip("openocd not found")
+    # rtt setup/start/channels exist only with a target; the dummy adapter needs no probe.
+    text = run([tool, "-c", "adapter driver dummy", "-f", "target/stm32f4x.cfg", "-c", "help rtt",
+                "-c", "shutdown"], log=OUT / "openocd-rtt.log")
+    for command in ("rtt server start", "rtt setup", "rtt start", "rtt channels"):
+        if command not in text:
+            raise RuntimeError("OpenOCD has no '%s'" % command)
+    script = ROOT / "stm32-rtt-console" / "scripts" / "check_rtt_support.sh"
+    report = run(["sh", script], log=OUT / "check_rtt_support.log", cwd=script.parent)
+    if "rtt setup <address> <size> <ID>" not in report:
+        raise RuntimeError("check_rtt_support.sh does not show 'rtt setup'")
+    version = re.search(r"Open On-Chip Debugger (\S+)", text)
+    return "RTT commands present, check_rtt_support.sh ok (OpenOCD %s)" % (
+        version.group(1) if version else "?")
+
+
 KITS = [
     ("kits: python scripts compile", check_python),
     ("kits: shell scripts parse", check_shell),
@@ -216,6 +236,7 @@ KITS = [
     ("embedded-tech-spec: template and example", check_tech_spec),
     ("stm32-renode-emulator: renode_compat", check_renode_compat),
     ("weact-logic-analyzer: self-test", check_weact),
+    ("stm32-rtt-console: OpenOCD RTT commands", check_openocd_rtt),
 ]
 
 

@@ -3,10 +3,14 @@
 #
 # Вызывается ПОСЛЕ инъекции блока в SRAM: OpenOCD ищет управляющий блок по строке "SEGGER RTT" в
 # указанном окне памяти, поэтому блок должен существовать до `rtt setup`.
-. "$HOME/.local/stm32-gdbtest/env.sh" 2>/dev/null
+ENV_SH="$HOME/.local/stm32-gdbtest/env.sh"
+[ -f "$ENV_SH" ] && . "$ENV_SH"
 
 TELNET_PORT="${1:-4444}"
 LOG="${2:-/tmp/rtt-poc}"
+# Окно поиска блока: по умолчанию последние 8 КБ SRAM STM32F411 (как у build_block.py).
+RTT_ADDR="${RTT_ADDR:-0x2001E000}"
+RTT_SIZE="${RTT_SIZE:-0x1000}"
 mkdir -p "$LOG"
 
 # Отправка команд в telnet-порт OpenOCD (без интерактивности).
@@ -15,8 +19,8 @@ send() {
 }
 
 echo "=== настройка RTT ==="
-echo "--- rtt setup 0x2001E000 0x1000 \"SEGGER RTT\""
-send 'rtt setup 0x2001E000 0x1000 "SEGGER RTT"'
+echo "--- rtt setup $RTT_ADDR $RTT_SIZE \"SEGGER RTT\""
+send "rtt setup $RTT_ADDR $RTT_SIZE \"SEGGER RTT\""
 
 echo "--- rtt start"
 send 'rtt start'
