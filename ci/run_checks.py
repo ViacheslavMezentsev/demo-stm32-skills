@@ -299,6 +299,34 @@ def check_diag_doctor():
     return "ST-Link, CMSIS-DAP (two cores), J-Link absent, missing config; extra commands before init"
 
 
+def check_site():
+    """site/ (GitHub Pages): local links and assets exist, no external scripts or styles, theme button on every page."""
+    site = ROOT / "site"
+    pages = sorted(site.rglob("*.html"))
+    if not pages:
+        raise RuntimeError("no pages in site/")
+    problems = []
+    for page in pages:
+        text = page.read_text(encoding="utf-8")
+        name = page.relative_to(site).as_posix()
+        for needle in ('<html lang="ru"', "<title>", 'id="theme-toggle"', "assets/theme.js", "assets/site.css"):
+            if needle not in text:
+                problems.append("%s: no %s" % (name, needle))
+        if re.search(r"<(?:script|link)[^>]+(?:src|href)=\"(?:https?:)?//", text):
+            problems.append("%s: external script or stylesheet" % name)
+        for target in re.findall(r"(?:href|src)=\"([^\"#]*)", text):
+            if not target or re.match(r"(?:https?:|mailto:)", target):
+                continue
+            path = (page.parent / target).resolve()
+            if path.is_dir():
+                path = path / "index.html"
+            if not path.is_file() or site.resolve() not in path.parents:
+                problems.append("%s: broken link %s" % (name, target))
+    if problems:
+        raise RuntimeError("; ".join(problems))
+    return "%d pages, local links and assets resolve" % len(pages)
+
+
 def check_shared():
     text = run([sys.executable, "-B", ROOT / "ci" / "sync_shared.py", "--check"])
     return text.strip().splitlines()[-1]
@@ -306,6 +334,7 @@ def check_shared():
 
 KITS = [
     ("kits: shared modules match their originals", check_shared),
+    ("pages: site/ links and assets", check_site),
     ("kits: python scripts compile", check_python),
     ("kits: shell scripts parse", check_shell),
     ("kits: JSON/JSONC files load", check_json),

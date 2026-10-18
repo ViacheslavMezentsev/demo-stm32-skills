@@ -57,6 +57,23 @@ python3 ci/sync_shared.py --check    # то же проверяет задани
 
 Симлинки и подмодули вместо копий не используются: на Windows и при копировании навыка в проект они теряются.
 
+## Сайт на GitHub Pages
+
+Страницы лежат в `site/`: статический HTML без сборки и внешних скриптов, общая тема — `site/assets/site.css`
+(цвета GitHub, тёмная по умолчанию) и `site/assets/theme.js` (круглая кнопка «тёмная, светлая, авто», выбор
+хранится в браузере). Workflow `Pages` публикует `site/` при push в main, если менялись `site/**` или сам
+workflow; проверка ссылок — `check_site` в `ci/run_checks.py` (задание Kits и шаг перед публикацией).
+
+Включить один раз: Settings -> Pages -> Build and deployment -> Source: GitHub Actions. Адрес:
+https://viacheslavmezentsev.github.io/demo-stm32-skills/
+
+```sh
+python3 -m http.server -d site 8000   # просмотр локально: http://localhost:8000
+```
+
+Новая страница навыка — `site/skills/<навык>/index.html` с той же шапкой (ссылки на `../../assets/`) и
+карточка в `site/index.html`.
+
 ## Git: рабочий цикл без PR
 
 ### Локальная проверка SSH-подписи

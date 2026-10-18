@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="ru" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Как работает stm32-diag-record</title>
+<meta name="description" content="Инфографика навыка stm32-diag-record: адреса по ELF, чтение памяти на ходу через OpenOCD или Renode, запись mcap и bag, просмотр в PlotJuggler.">
+<link rel="stylesheet" href="../../assets/site.css">
+<script src="../../assets/theme.js"></script>
+</head>
+<body>
+<header class="site-header">
+  <div class="inner">
+    <a class="brand" href="../../">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+        <rect x="6" y="6" width="12" height="12" rx="1.5"/><rect x="9.5" y="9.5" width="5" height="5" rx="0.5"/>
+        <path d="M9 2.5v3.5M12 2.5v3.5M15 2.5v3.5M9 18v3.5M12 18v3.5M15 18v3.5M2.5 9h3.5M2.5 12h3.5M2.5 15h3.5M18 9h3.5M18 12h3.5M18 15h3.5"/>
+      </svg>
+      <span>demo-stm32-skills</span>
+    </a>
+    <nav class="site-nav" aria-label="Разделы">
+      <a href="../../#skills">Навыки</a>
+      <a class="wide" href="https://github.com/ViacheslavMezentsev/demo-stm32-skills">Репозиторий</a>
+      <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Тема">
+        <svg class="icon-dark" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M9.6 1.1a.75.75 0 0 1 .3.9 5.5 5.5 0 0 0 4.1 7.3.75.75 0 0 1 .4 1.3A7 7 0 1 1 8.3 1a.75.75 0 0 1 1.3.1ZM7.4 2.6a5.5 5.5 0 1 0 5.4 8.6 7 7 0 0 1-5.4-8.6Z"/></svg>
+        <svg class="icon-light" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 11.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm0 1.5a5 5 0 1 1 0-10 5 5 0 0 1 0 10ZM8 0a.75.75 0 0 1 .75.75v.5a.75.75 0 0 1-1.5 0v-.5A.75.75 0 0 1 8 0Zm0 14a.75.75 0 0 1 .75.75v.5a.75.75 0 0 1-1.5 0v-.5A.75.75 0 0 1 8 14ZM0 8a.75.75 0 0 1 .75-.75h.5a.75.75 0 0 1 0 1.5h-.5A.75.75 0 0 1 0 8Zm14 0a.75.75 0 0 1 .75-.75h.5a.75.75 0 0 1 0 1.5h-.5A.75.75 0 0 1 14 8ZM2.3 2.3a.75.75 0 0 1 1.06 0l.36.36a.75.75 0 0 1-1.06 1.06l-.36-.36a.75.75 0 0 1 0-1.06Zm9.98 9.98a.75.75 0 0 1 1.06 0l.36.36a.75.75 0 0 1-1.06 1.06l-.36-.36a.75.75 0 0 1 0-1.06ZM13.7 2.3a.75.75 0 0 1 0 1.06l-.36.36a.75.75 0 1 1-1.06-1.06l.36-.36a.75.75 0 0 1 1.06 0ZM3.72 12.28a.75.75 0 0 1 0 1.06l-.36.36a.75.75 0 0 1-1.06-1.06l.36-.36a.75.75 0 0 1 1.06 0Z"/></svg>
+        <svg class="icon-auto" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0Zm0 1.5v13a6.5 6.5 0 0 0 0-13Z"/></svg>
+      </button>
+    </nav>
+  </div>
+</header>
+<main>
+<div class="breadcrumb"><a href="../../">demo-stm32-skills</a> / <a href="../../#skills">навыки</a> / stm32-diag-record</div>
+<h1>Как работает stm32-diag-record</h1>
+<p class="lead">Скрипт записывает значения переменных и регистров работающей прошивки в файл, ничего не меняя в
+самой прошивке. Работа идёт в три шага: адреса вычисляются заранее без платы, затем отладчик читает память по
+этим адресам, а файл потом открывается в PlotJuggler.</p>
+
+<div class="box">
+  <h2>Путь данных</h2>
+  <div class="legend">
+    <span class="offline">подготовка, плата не нужна</span>
+    <span class="live">запись, плата работает</span>
+    <span class="alt">вариант без платы</span>
+    <span class="view">просмотр</span>
+  </div>
+
+  <div class="stage offline">
+    <div class="stage-title">1. Где лежат значения: адреса из ELF и SVD</div>
+    <div class="stage-note">Выполняется перед каждой записью за секунды. Плата и OpenOCD не участвуют.</div>
+    <div class="flow">
+      <div class="inputs">
+        <div class="node"><h3>fields.toml</h3><p>что записывать: имя, тип, выражение</p><span class="mono">expr = "&amp;probe_telemetry.frames"</span></div>
+        <div class="node"><h3>прошивка.elf</h3><p>символы и отладочная информация DWARF</p><span class="mono">сборка с -g</span></div>
+        <div class="node"><h3>файл SVD <span class="label">по желанию</span></h3><p>имена регистров периферии от производителя</p></div>
+      </div>
+      <div class="arrow">читает</div>
+      <div class="node center"><h3>resolve_addresses.py</h3><p>выражения C вычисляет GDB по DWARF, поля <code>svd:</code> вычисляет svd_lookup.py</p><span class="mono">gdb-py3 -batch, без цели</span></div>
+      <div class="arrow">пишет</div>
+      <div class="node center"><h3>addresses.json</h3><p>для каждого поля: адрес, тип, сдвиг и маска</p><span class="mono">/probe/frames → 0x20000030</span></div>
+    </div>
+  </div>
+
+  <div class="stage live">
+    <div class="stage-title">2. Чтение на ходу и запись файла</div>
+    <div class="stage-note">Ядро не останавливается: отладочный порт Cortex-M читает память параллельно работе программы.</div>
+    <div class="flow">
+      <div class="node"><h3>Микроконтроллер</h3><p>прошивка работает как обычно; RAM и регистры периферии</p><span class="mono">STM32, AT32, nRF52, RP2040…</span></div>
+      <div class="arrow both">SWD</div>
+      <div class="node"><h3>Отладчик</h3><p>любой, который понимает OpenOCD</p><span class="mono">ST-Link, CMSIS-DAP, J-Link</span></div>
+      <div class="arrow both">USB</div>
+      <div class="node"><h3>OpenOCD</h3><p>запускается скриптом без сброса цели; принимает команды по telnet</p><span class="mono">127.0.0.1:4444, mdw</span></div>
+      <div class="arrow both">telnet</div>
+      <div class="node"><h3>record_diag.py</h3><p>с частотой <code>--rate</code> читает слова, переводит их в значения, ставит метку времени</p><span class="mono">kind: uint32, int32, float32…</span></div>
+      <div class="arrow">сообщения</div>
+      <div class="node"><h3>Файл</h3><p>mcap_writer.py или bag_writer.py, только стандартная библиотека Python</p><span class="mono">diag/record-…mcap | .bag</span></div>
+    </div>
+    <div class="alt-row alt">
+      <div class="node"><h3>Без платы: Renode</h3><p>Вместо микроконтроллера, отладчика и OpenOCD работает эмулятор. Скрипт читает те же адреса через монитор Renode, эмуляция не прерывается.</p><span class="mono">--backend renode, telnet 127.0.0.1:1234, sysbus ReadDoubleWord</span></div>
+    </div>
+  </div>
+
+  <div class="stage view">
+    <div class="stage-title">3. Просмотр</div>
+    <div class="stage-note">ROS не нужен ни для записи, ни для mcap. Каждое поле в файле — отдельный канал с именем <code>topic</code>.</div>
+    <div class="flow">
+      <div class="node"><h3>.mcap</h3><p>открывается загрузчиком MCAP в PlotJuggler под Windows и Linux</p><span class="mono">проверка: mcap info</span></div>
+      <div class="arrow">открыть</div>
+      <div class="node"><h3>PlotJuggler</h3><p>графики каналов, их сравнение, масштаб по времени</p><span class="mono">Windows, Linux</span></div>
+      <div class="arrow">или</div>
+      <div class="node"><h3>.bag (ROS1)</h3><p>в PlotJuggler открывается только с плагином ROS1, то есть под Linux с ROS; под Windows такого плагина нет</p><span class="mono">rosbag info, Python rosbags</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="box">
+  <h2>Один цикл опроса (10 раз в секунду по умолчанию)</h2>
+  <div class="cycle">
+    <div class="step"><b>Группировка</b>Адреса, которые лежат не дальше 256 байт друг от друга, читаются одной командой.</div>
+    <div class="step"><b>Чтение</b><span class="mono">mdw 0x20000030 6</span> возвращает шесть 32-битных слов подряд.</div>
+    <div class="step"><b>Сборка</b>Невыровненное поле собирается из двух соседних слов, у поля регистра применяются сдвиг и маска.</div>
+    <div class="step"><b>Перевод</b>Слово трактуется по <code>kind</code>: как целое, число со знаком, float или миллисекунды в секунды.</div>
+    <div class="step"><b>Фильтр</b>Значения вне <code>min</code> и <code>max</code> не пишутся, а считаются отдельно.</div>
+    <div class="step"><b>Запись</b>Все поля цикла получают одну метку времени от часов компьютера.</div>
+  </div>
+</div>
+
+<div class="cols">
+  <div class="box">
+    <h2>Откуда синтаксис описания полей</h2>
+    <pre><span class="tok-c"># файл в формате TOML; [[field]] — одно поле</span>
+[[field]]
+<span class="tok-k">topic</span>   = <span class="tok-s">"/probe/frames"</span>
+<span class="tok-k">message</span> = <span class="tok-s">"std_msgs/UInt32"</span>
+<span class="tok-k">kind</span>    = <span class="tok-s">"uint32"</span>
+<span class="tok-k">expr</span>    = <span class="tok-s">"&amp;probe_telemetry.frames"</span>
+
+[[field]]
+<span class="tok-k">topic</span>   = <span class="tok-s">"/probe/pin_frame"</span>
+<span class="tok-k">message</span> = <span class="tok-s">"std_msgs/UInt32"</span>
+<span class="tok-k">kind</span>    = <span class="tok-s">"uint32"</span>
+<span class="tok-k">expr</span>    = <span class="tok-s">"svd:GPIOB.ODR.ODR15"</span></pre>
+    <table>
+      <tr><th>Ключ</th><th>Чем определяется</th></tr>
+      <tr><td>файл</td><td>общий формат конфигураций <a href="https://toml.io/ru/">TOML</a></td></tr>
+      <tr><td><code>expr</code></td><td>выражение языка C, как в команде GDB <code>print</code>: <code>&amp;var</code>, <code>&amp;obj.field</code>, <code>&amp;arr[3]</code>. GDB вычисляет его по ELF, результат — адрес</td></tr>
+      <tr><td><code>svd:</code></td><td>соглашение навыка <code>svd:ПЕРИФЕРИЯ.РЕГИСТР[.ПОЛЕ]</code>; имена берутся из SVD-файла производителя</td></tr>
+      <tr><td><code>message</code></td><td>имена стандартных типов ROS1 <code>std_msgs</code>: так файл понимают PlotJuggler и инструменты ROS</td></tr>
+      <tr><td><code>kind</code></td><td>короткий список навыка: <code>uint32</code>, <code>int32</code>, <code>float32</code>, <code>uint32_seconds</code></td></tr>
+      <tr><td><code>topic</code></td><td>любое имя; по обычаю ROS — <code>/группа/имя</code></td></tr>
+    </table>
+  </div>
+
+  <div class="box">
+    <h2>Не только STM32</h2>
+    <p>Навык проверен на STM32, но работает с любым Cortex-M, с которым работает OpenOCD. Подходит ли MCU, решают
+    инструменты, а не сам навык:</p>
+    <div class="chips">
+      <span class="label" style="--c: var(--success)">STM32 F1, F4: в CI</span>
+      <span class="label" style="--c: var(--attention)">AT32F403A: план R20</span>
+      <span class="label">GD32</span><span class="label">nRF52</span><span class="label">RP2040</span><span class="label">другие Cortex-M</span>
+    </div>
+    <ul>
+      <li>OpenOCD знает отладчик (<code>--interface</code>) и цель (<code>--target</code>, штатный скрипт или скрипт производителя);</li>
+      <li>память читается без остановки ядра: нет защиты от чтения, скрипт цели не сбрасывает её при подключении;</li>
+      <li>прошивка собрана с отладочной информацией, есть GDB с Python;</li>
+      <li>для полей <code>svd:</code> — SVD производителя, для работы без платы — модель MCU в Renode.</li>
+    </ul>
+    <p style="margin-top:10px">Проверка нового MCU начинается с доктора с теми же ключами, что и у записи:</p>
+    <pre>python record_diag.py --doctor \
+  --interface interface/cmsis-dap.cfg \
+  --target target/nrf52.cfg \
+  --elf app.elf --fields my_fields.toml</pre>
+    <p>Доктор показывает, найдены ли конфигурации, отвечает ли отладчик, какое ядро и в каком состоянии цель,
+    вычисляются ли адреса и читается ли слово на ходу.</p>
+  </div>
+</div>
+
+<div class="box">
+  <h2>Что важно понимать</h2>
+  <div class="facts">
+    <div class="fact"><b>Прошивка не меняется</b>В неё не добавляется код. Читается то, что уже есть в памяти.</div>
+    <div class="fact"><b>Ядро не останавливается</b>Нет точек останова и сброса (кроме ключа <code>--reset</code>). UART остаётся свободным.</div>
+    <div class="fact"><b>Время — от компьютера</b>Для точных интервалов добавьте в поля счётчик платы, например миллисекунды SysTick.</div>
+    <div class="fact"><b>Это выборка, а не трасса</b>Пишется значение в момент чтения. Изменения между чтениями не видны, для них есть RTT и SWO.</div>
+    <div class="fact"><b>Время в Renode другое</b>Эмуляция обычно идёт медленнее реального времени, интервалы смотрите по счётчику платы.</div>
+    <div class="fact"><b>Сверяйте с эталоном</b>Ошибка в смещении на 4 байта даёт правдоподобное, но чужое значение.</div>
+  </div>
+</div>
+
+<p><a href="https://github.com/ViacheslavMezentsev/demo-stm32-skills/tree/main/stm32-diag-record">Описание навыка (SKILL.md) и скрипты</a> · версия 1.3.0</p>
+</main>
+<footer class="site-footer">
+  <div class="inner">
+    <span>demo-stm32-skills · лицензия MIT</span>
+    <a href="https://github.com/ViacheslavMezentsev/demo-stm32-skills">исходники на GitHub</a>
+    <a href="https://github.com/ViacheslavMezentsev/stm32-skills-probe">прошивка-зонд stm32-skills-probe</a>
+  </div>
+</footer>
+</body>
+</html>

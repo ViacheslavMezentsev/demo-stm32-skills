@@ -2,6 +2,8 @@
 
 Набор навыков (Agent Skills) для ИИ-ассистентов, помогающих в разработке под STM32 и совместимые микроконтроллеры: настройка сборки, генерация кода, архитектура прошивок, отладка и диагностика.
 
+Наглядные объяснения отдельных навыков — на [сайте репозитория](https://viacheslavmezentsev.github.io/demo-stm32-skills/) (пока stm32-diag-record).
+
 Все навыки оформлены по [спецификации Agent Skills](https://agentskills.io/specification) и подходят для Claude Code, Cursor, Codex и других агентов, поддерживающих этот формат.
 
 Репозиторий демонстрационный: часть навыков привязана к фреймворку [stm32-cmake-yml](https://github.com/ViacheslavMezentsev/stm32-cmake-yml) и может потребовать адаптации под ваш проект.
@@ -37,7 +39,7 @@
 | [stm32-rtt-console](stm32-rtt-console/) | Консоль RTT через OpenOCD и ST-Link без занятия UART |
 | [stm32-swo-trace](stm32-swo-trace/) | Трассировка SWO/ITM и профилирование по DWT |
 | [stm32-ros-alt-channel](stm32-ros-alt-channel/) | Вывод переменных и регистров в ROS1 по SWD или rosserial |
-| [stm32-diag-record](stm32-diag-record/) | Запись переменных и регистров по SWD или из Renode в mcap или bag без ROS (STM32 и другие Cortex-M) |
+| [stm32-diag-record](stm32-diag-record/) | Запись переменных и регистров по SWD или из Renode в mcap или bag без ROS (STM32 и другие Cortex-M); [как это работает](https://viacheslavmezentsev.github.io/demo-stm32-skills/skills/stm32-diag-record/) |
 | [stm32-renode-emulator](stm32-renode-emulator/) | Проверка прошивки в эмуляторе Renode без платы |
 | [weact-logic-analyzer](weact-logic-analyzer/) | Измерения логическим анализатором WeAct через sigrok-cli |
 
