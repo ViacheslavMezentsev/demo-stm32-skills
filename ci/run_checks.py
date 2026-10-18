@@ -249,6 +249,56 @@ def check_diag_helpers():
     return "unaligned words, kinds, shift and mask"
 
 
+# OpenOCD 0.12 output shapes for the doctor parser (adapters and targets other than ST-Link and STM32 too).
+OPENOCD_STLINK_OK = """Open On-Chip Debugger 0.12.0
+Info : clock speed 2000 kHz
+Info : STLINK V2J37S7 (API v2) VID:PID 0483:3748
+Info : Target voltage: 3.235294
+Info : [stm32f4x.cpu] Cortex-M4 r0p1 processor detected
+Info : [stm32f4x.cpu] target has 6 breakpoints, 4 watchpoints
+    TargetName         Type       Endian TapName            State
+--  ------------------ ---------- ------ ------------------ ------------
+ 0* stm32f4x.cpu       hla_target little stm32f4x.cpu       running
+0x20000010: 0001e240
+"""
+OPENOCD_CMSIS_DAP_RP2040 = """Info : Using CMSIS-DAPv2 interface with VID:PID=0x2e8a:0x000c, serial=0123456789AB
+Info : CMSIS-DAP: SWD supported
+Info : CMSIS-DAP: FW Version = 2.0.0
+Info : [rp2040.core0] Cortex-M0+ r0p1 processor detected
+Info : [rp2040.core0] Examination succeed
+    TargetName         Type       Endian TapName            State
+--  ------------------ ---------- ------ ------------------ ------------
+ 0* rp2040.core0       cortex_m   little rp2040.cpu         running
+ 1  rp2040.core1       cortex_m   little rp2040.cpu         running
+"""
+OPENOCD_NO_JLINK = "Error: No J-Link device found\n"
+OPENOCD_NO_CONFIG = "embedded:startup.tcl:28: Error: Can't find target/at32f403axx.cfg\nin procedure 'script'\n"
+
+
+def check_diag_doctor():
+    sys.path.insert(0, str(ROOT / "stm32-diag-record" / "scripts"))
+    import record_diag as diag
+    ok = diag.parse_openocd(OPENOCD_STLINK_OK)
+    assert ok["examined"] and ok["core"] == "Cortex-M4" and ok["word"] == (0x20000010, 0x1E240), ok
+    assert ok["targets"] == [{"name": "stm32f4x.cpu", "type": "hla_target", "state": "running"}], ok["targets"]
+    assert any("STLINK" in line for line in ok["adapter"]), ok["adapter"]
+    dap = diag.parse_openocd(OPENOCD_CMSIS_DAP_RP2040)
+    assert dap["examined"] and dap["core"] == "Cortex-M0+" and len(dap["targets"]) == 2, dap
+    assert any("CMSIS-DAP" in line for line in dap["adapter"]) and dap["word"] is None, dap
+    jlink = diag.parse_openocd(OPENOCD_NO_JLINK)
+    assert not jlink["examined"] and jlink["errors"] and not jlink["missing"], jlink
+    assert diag.parse_openocd(OPENOCD_NO_CONFIG)["missing"] == ["target/at32f403axx.cfg"], "missing config"
+
+    class Args(object):
+        openocd, interface, serial, target, port, reset = "openocd", "interface/jlink.cfg", "", "target/x.cfg", 4444, False
+        openocd_command = ["adapter speed 4000", "reset_config none"]
+    command = diag.openocd_probe_command(Args, 0x20000013)
+    joined = " ".join(command)
+    assert joined.index("reset_config none") < joined.index(" init") and "mdw 0x20000010" in joined, joined
+    assert "telnet_port disabled" in joined and diag.openocd_command(Args)[-1] == "init", joined
+    return "ST-Link, CMSIS-DAP (two cores), J-Link absent, missing config; extra commands before init"
+
+
 def check_shared():
     text = run([sys.executable, "-B", ROOT / "ci" / "sync_shared.py", "--check"])
     return text.strip().splitlines()[-1]
@@ -266,6 +316,7 @@ KITS = [
     ("weact-logic-analyzer: self-test", check_weact),
     ("stm32-rtt-console: OpenOCD RTT commands", check_openocd_rtt),
     ("stm32-diag-record: conversion helpers", check_diag_helpers),
+    ("stm32-diag-record: doctor parses OpenOCD output", check_diag_doctor),
 ]
 
 
@@ -577,6 +628,11 @@ class Emulation(object):
                 if renode.poll() is not None or time.monotonic() > deadline:
                     raise RuntimeError("Renode did not start the machine (see renode.log)")
                 time.sleep(0.5)
+            doctor = run([sys.executable, "-B", ROOT / "stm32-diag-record" / "scripts" / "record_diag.py", "--backend",
+                          "renode", "--port", str(port), "--elf", elf, "--svd", self.svd_f411, "--doctor"],
+                         log=work / "doctor.log", env=dict(self.env, GDB=self.gdb()), timeout=120)
+            if not re.search(r"Чтение памяти на ходу\s+ок", doctor):
+                raise RuntimeError("doctor did not read memory from Renode: %s" % doctor[-300:])
             run([sys.executable, "-B", ROOT / "stm32-diag-record" / "scripts" / "record_diag.py", "--backend", "renode",
                  "--port", str(port), "--elf", elf, "--svd", self.svd_f411, "--record", "mcap", "--seconds", "2",
                  "--rate", "10", "--out", out], log=work / "record.log", env=dict(self.env, GDB=self.gdb()), timeout=120)
@@ -596,7 +652,7 @@ class Emulation(object):
             raise RuntimeError("tick_ms %s, loop_counter %s" % (ticks[:6], loops[:6]))
         if pins - {0, 1} or len(values) != 8:
             raise RuntimeError("pin_frame %s, topics %d" % (sorted(pins), len(values)))
-        return "%d cycles from the Renode monitor; tick_ms %d -> %d, loop_counter grows" % (len(ticks), ticks[0], ticks[-1])
+        return "doctor reads memory; %d cycles from the Renode monitor; tick_ms %d -> %d" % (len(ticks), ticks[0], ticks[-1])
 
 
 def main(argv=None):

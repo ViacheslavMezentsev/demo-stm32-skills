@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""Запись диагностики с платы без ROS: ST-Link -> OpenOCD (или Renode) -> файл bag или mcap.
+"""Запись диагностики с платы без ROS: SWD-пробник -> OpenOCD (или Renode) -> файл bag или mcap.
 
 НАЗНАЧЕНИЕ. Снять выбранные поля прошивки в файл для офлайн-разбора (PlotJuggler, `mcap info`,
 `rosbag info`). ROS не нужен ни для записи, ни для чтения: форматы пишут `bag_writer.py` и
 `mcap_writer.py` на стандартной библиотеке.
 
-ЦЕПОЧКА. ST-Link (SWD) -> OpenOCD (telnet) -> чтение 32-битных слов по адресам -> сериализация
+ЦЕПОЧКА. Пробник SWD (ST-Link, CMSIS-DAP, J-Link и др.) -> OpenOCD (telnet) -> чтение 32-битных слов по адресам -> сериализация
 сообщений -> файл. Адреса считаются офлайн по ELF (и SVD), плата при этом не нужна. OpenOCD
 подключается без сброса: прошивка продолжает работать (сброс — только по ключу --reset).
+
+ДРУГИЕ MCU. Cortex-M не только STM32: пробник и цель задаются конфигурациями OpenOCD (--interface,
+--target, --openocd-command), совместимость проверяет --doctor с теми же ключами.
 
 БЕЗ ПЛАТЫ. `--backend renode` читает те же адреса из работающего Renode через его telnet-монитор
 (`renode --port 1234`, команда `sysbus ReadDoubleWord`); Renode запускается отдельно.
@@ -22,6 +25,7 @@
     python record_diag.py --record bag --seconds 30 --compress bz2 --out build/my.bag
     python record_diag.py --target target/stm32f1x.cfg --serial <серийный номер> --record mcap
     python record_diag.py --backend renode --port 1234 --record mcap --seconds 10
+    python record_diag.py --interface interface/cmsis-dap.cfg --target target/nrf52.cfg --doctor
 """
 import argparse
 import json
@@ -33,6 +37,7 @@ import socket
 import struct
 import subprocess
 import sys
+import tempfile
 import time
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -46,6 +51,9 @@ WORD_LINE = re.compile(r"^0x([0-9a-fA-F]+):((?:\s+[0-9a-fA-F]{8})+)", re.M)
 CLUSTER_BYTES = 256  # соседние адреса в пределах окна читаются одной командой mdw
 DEFAULT_PORTS = {"openocd": 4444, "renode": 1234}
 RENODE_PROMPT = re.compile(r"(?:^|\n)\(([^()\n]*)\) ")
+ADAPTER_HINTS = ("stlink", "st-link", "cmsis-dap", "j-link", "jlink", "serial", "target voltage", "vtarget",
+                 "hardware version", "fw version", "firmware version", "ftdi", "xds110", "picoprobe", "adapter")
+TARGET_ROW = re.compile(r"^\s*\d+\*?\s+(\S+)\s+(\S+)\s+\S+\s+\S+\s+(\S+)\s*$", re.M)
 RENODE_VALUE = re.compile(r"ReadDoubleWord 0x([0-9A-Fa-f]+)[^\n]*\n\s*(0x[0-9A-Fa-f]+)\s*\n")
 
 
@@ -59,33 +67,60 @@ def find_elf(explicit):
     return candidates[0] if candidates else pathlib.Path("build/firmware.elf")
 
 
-def list_probes(args):
-    """Подключённые пробники: сведения печатает `init` интерфейса (без цели, ядро не трогается)."""
-    try:
-        result = subprocess.run([args.openocd, "-f", args.interface, "-c", "init", "-c", "shutdown"],
-                                capture_output=True, text=True, timeout=60)
-    except (OSError, subprocess.SubprocessError) as error:
-        return ["openocd не запустился: %s" % error]
-    lines = [line.strip() for line in (result.stdout + result.stderr).splitlines()]
-    probes = [line for line in lines if "stlink" in line.lower() or "serial" in line.lower()]
-    return probes[:6] or ["пробник не найден: подключён ли отладчик?"]
-
-
-def openocd_command(args):
+def openocd_base(args):
+    """Пробник, цель и дополнительные команды; сетевые порты только на 127.0.0.1."""
     command = [args.openocd, "-f", args.interface]
     if args.serial:
         command += ["-c", "adapter serial %s" % args.serial]
-    command += ["-f", args.target, "-c", "bindto 127.0.0.1", "-c", "gdb_port disabled", "-c", "tcl_port disabled",
-                "-c", "telnet_port %d" % args.port, "-c", "init"]
+    command += ["-f", args.target]
+    for extra in args.openocd_command:
+        command += ["-c", extra]
+    return command + ["-c", "bindto 127.0.0.1", "-c", "gdb_port disabled", "-c", "tcl_port disabled"]
+
+
+def openocd_command(args):
+    command = openocd_base(args) + ["-c", "telnet_port %d" % args.port, "-c", "init"]
     if args.reset:
         command += ["-c", "reset run"]
     return command
 
 
+def openocd_probe_command(args, address=None):
+    """Разовая проверка доктора: init, таблица целей, при наличии адреса — одно слово без остановки ядра."""
+    command = openocd_base(args) + ["-c", "telnet_port disabled", "-c", "init", "-c", "targets"]
+    if address is not None:
+        command += ["-c", "mdw 0x%08X" % (address & ~3)]
+    return command + ["-c", "shutdown"]
+
+
+def parse_openocd(text):
+    """Разбор вывода OpenOCD для доктора: пробник, ядро, цели, ошибки, прочитанное слово."""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    result = {
+        "missing": re.findall(r"Can't find (\S+)", text),
+        "errors": [line for line in lines if "Error:" in line],
+        "adapter": [line for line in lines if line.startswith(("Info", "Warn")) and
+                    any(hint in line.lower() for hint in ADAPTER_HINTS)],
+        "core": None, "targets": [], "word": None,
+    }
+    core = re.search(r"(Cortex-M\S*)(?:\s+r\d+p\d+)?\s+processor detected", text)
+    if core:
+        result["core"] = core.group(1)
+    if "TargetName" in text:
+        result["targets"] = [{"name": name, "type": kind, "state": state}
+                             for name, kind, state in TARGET_ROW.findall(text.split("TargetName", 1)[1])]
+    word = WORD_LINE.search(text)
+    if word:
+        result["word"] = (int(word.group(1), 16), int(word.group(2).split()[0], 16))
+    result["examined"] = "Examination succeed" in text or any(
+        target["state"] in ("running", "halted", "reset") for target in result["targets"])
+    return result
+
+
 # ---------------------------------------------------------------- адреса
 
 def resolve(args, elf, out_dir):
-    """Пересчитать адреса по ELF и SVD (офлайн). Возвращает список полей с адресами."""
+    """Пересчитать адреса по ELF и SVD (офлайн). Возвращает файл адресов и список полей."""
     out = pathlib.Path(args.addresses) if args.addresses else out_dir / "addresses.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     command = [sys.executable, str(HERE / "resolve_addresses.py"), "--elf", str(elf.resolve()),
@@ -302,40 +337,86 @@ def convert(word, kind, shift=0, mask=0xFFFFFFFF):
 # ---------------------------------------------------------------- доктор
 
 def doctor(args):
+    """Совместимость окружения, пробника и цели с теми же ключами, что и у записи.
+
+    Ядро не останавливается и не сбрасывается (если конфигурация цели сама не сбрасывает при подключении).
+    """
     checks = [("Python 3.9+", sys.version_info >= (3, 9), sys.version.split()[0])]
-    if args.backend == "openocd":
-        checks.append(("OpenOCD", bool(args.openocd), args.openocd or "нет в PATH: --openocd"))
     elf = find_elf(args.elf)
     checks.append(("ELF прошивки", elf.is_file(), str(elf)))
     checks.append(("Спецификация полей", pathlib.Path(args.fields).is_file(), str(args.fields)))
     checks.append(("SVD (только для полей svd:)", True, str(args.svd or "не задан: поля svd: недоступны")))
+    address = None
+    if elf.is_file() and pathlib.Path(args.fields).is_file():
+        try:
+            saved, args.addresses = args.addresses, ""
+            try:
+                with tempfile.TemporaryDirectory() as work:
+                    _out, fields = resolve(args, elf, pathlib.Path(work))
+            finally:
+                args.addresses = saved
+            address = fields[0]["address"] if fields else None
+            checks.append(("Адреса полей (GDB по ELF)", bool(fields), "полей %d, первое %s = 0x%08X"
+                           % (len(fields), fields[0]["topic"], address) if fields else "полей нет"))
+        except SystemExit as error:
+            checks.append(("Адреса полей (GDB по ELF)", False, str(error).splitlines()[-1]))
+
+    details = []
     if args.backend == "renode":
+        name = "Монитор Renode %s:%d" % (args.host, args.port)
         try:
             reader = RenodeReader(args.host, args.port, args.machine)
-            checks.append(("Монитор Renode %s:%d" % (args.host, args.port), True, "машина %s" % reader.machine))
+            checks.append((name, True, "машина %s" % reader.machine))
+            if address is not None:
+                words = reader.read_words(aligned_needed(address))
+                value = word_at(words, address)
+                checks.append(("Чтение памяти на ходу", value is not None,
+                               "0x%08X = 0x%08X" % (address, value) if value is not None else "нет ответа"))
             reader.close()
         except (OSError, SystemExit) as error:
-            checks.append(("Монитор Renode %s:%d" % (args.host, args.port), False,
-                           str(error) if isinstance(error, SystemExit) else "не слушает: renode --port %d" % args.port))
-    else:
+            checks.append((name, False, str(error) if isinstance(error, SystemExit) else
+                           "не слушает: renode --port %d" % args.port))
+    elif not args.openocd:
+        checks.append(("OpenOCD", False, "нет в PATH: --openocd"))
+    elif args.use_running:
         try:
             socket.create_connection((args.host, args.port), timeout=1).close()
-            free = args.use_running
+            checks.append(("OpenOCD telnet %s:%d" % (args.host, args.port), True, "слушает"))
         except OSError:
-            free = not args.use_running
-        checks.append(("Порт telnet %d" % args.port, free,
-                       "OpenOCD уже слушает" if args.use_running else "свободен или занят: --use-running/--port"))
+            checks.append(("OpenOCD telnet %s:%d" % (args.host, args.port), False, "не слушает: --port"))
+    else:
+        checks.append(("OpenOCD", True, args.openocd))
+        try:
+            run = subprocess.run(openocd_probe_command(args, address), capture_output=True, text=True, timeout=60)
+            text = run.stdout + run.stderr
+        except (OSError, subprocess.SubprocessError) as error:
+            text = "Error: openocd не запустился: %s" % error
+        info = parse_openocd(text)
+        checks.append(("Конфигурации OpenOCD", not info["missing"],
+                       "найдены" if not info["missing"] else "нет: %s" % ", ".join(info["missing"])))
+        if not info["missing"]:
+            adapter_error = [line for line in info["errors"] if not info["examined"]]
+            checks.append(("Пробник (%s)" % args.interface, bool(info["adapter"]) or info["examined"],
+                           (info["adapter"] or adapter_error or ["нет ответа"])[0][:70]))
+            state = ", ".join("%s %s" % (t["name"], t["state"]) for t in info["targets"]) or "нет"
+            checks.append(("Цель (%s)" % args.target, info["examined"],
+                           "%s; %s" % (info["core"] or "ядро не определено", state)))
+            if address is not None and info["examined"]:
+                checks.append(("Чтение памяти на ходу", info["word"] is not None,
+                               "0x%08X = 0x%08X" % info["word"] if info["word"] else "mdw не ответил"))
+        details = info["adapter"] + info["errors"]
 
-    print("доктор окружения (ядро не останавливается, плата не сбрасывается):")
+    print("доктор (%s; ядро не останавливается, плата не сбрасывается):" % args.backend)
     failed = 0
     for name, ok, detail in checks:
         failed += 0 if ok else 1
-        print("  %-30s %-4s %s" % (name, "ок" if ok else "НЕТ", detail[:70]))
-    if args.backend == "openocd" and args.openocd and not args.use_running:
-        print("\n  пробники (%s):" % args.interface)
-        for line in list_probes(args):
-            print("    " + line[:100])
-        print("  без --serial OpenOCD берёт первый найденный")
+        print("  %-34s %-4s %s" % (name, "ок" if ok else "НЕТ", detail[:80]))
+    if details:
+        print("\n  OpenOCD:")
+        for line in details[:12]:
+            print("    " + line[:110])
+    if failed and args.backend == "openocd":
+        print("\n  проверьте --interface, --target, --serial; дополнительные команды OpenOCD — --openocd-command")
     print("\n  провалено: %d из %d" % (failed, len(checks)))
     return 0 if failed == 0 else 1
 
@@ -396,8 +477,10 @@ def main(argv=None):
     parser.add_argument("--svd", default=os.environ.get("STM32_SVD", ""), help="SVD для полей svd: (по умолчанию $STM32_SVD)")
     parser.add_argument("--addresses", default="", help="куда сохранить JSON адресов (по умолчанию рядом с записью)")
     parser.add_argument("--serial", default=os.environ.get("STLINK_SERIAL", ""), help="серийный номер пробника ($STLINK_SERIAL)")
-    parser.add_argument("--interface", default="interface/stlink.cfg", help="конфигурация пробника OpenOCD")
-    parser.add_argument("--target", default="target/stm32f4x.cfg", help="конфигурация цели OpenOCD (F1: target/stm32f1x.cfg)")
+    parser.add_argument("--interface", default="interface/stlink.cfg", help="конфигурация пробника OpenOCD (stlink, cmsis-dap, jlink, ...)")
+    parser.add_argument("--target", default="target/stm32f4x.cfg", help="конфигурация цели OpenOCD (target/stm32f1x.cfg, target/nrf52.cfg, ...)")
+    parser.add_argument("--openocd-command", action="append", default=[], metavar="CMD",
+                        help="команда OpenOCD после конфигурации цели, до init (можно несколько раз)")
     parser.add_argument("--reset", action="store_true", help="сбросить цель после подключения (по умолчанию — без сброса)")
     parser.add_argument("--record", "--format", dest="record", choices=["bag", "mcap"], default="mcap")
     parser.add_argument("--out", default="", help="файл записи (по умолчанию <каталог ELF>/diag/record-<дата>.<формат>)")
