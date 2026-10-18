@@ -15,6 +15,8 @@ VTOR, resume -> rtt setup/start/server -> чтение TCP :19021 -> запис�
 нет VTOR, режим недоступен.
 """
 import json
+import os
+import signal
 import pathlib
 import re
 import socket
@@ -98,10 +100,20 @@ def build_image(args, elf, addresses, tick_address, workdir):
     return out, json.loads(out.with_suffix(".layout.json").read_text(encoding="utf-8"))
 
 
-def install(telnet, layout, image_path):
+def install(telnet, layout, image_path, saved):
     """Залить образ и включить перехват. Возвращает исходные VTOR и RCC для восстановления."""
     timer, nvic = layout["timer"], layout["nvic"]
-    saved = {"vtor": mdw(telnet, layout["vtor"]), "rcc": mdw(telnet, layout["rcc"]["enable_reg"])}
+    mask = 1 << nvic["bit"]
+    for address in (nvic["iser"], nvic["ispr"], nvic["iser"] + 0x200):
+        if mdw(telnet, address) & mask:
+            raise RuntimeError("таймер имеет enabled/pending/active IRQ; запись не начата")
+    if mdw(telnet, layout["rcc"]["enable_reg"]) & layout["rcc"]["enable_bit"]:
+        raise RuntimeError("тактирование таймера уже включено; запись не начата")
+    first = mdw(telnet, layout["tick_address"])
+    time.sleep(0.1)
+    if mdw(telnet, layout["tick_address"]) == first:
+        raise RuntimeError("tick не растёт до записи; проверьте прошивку и выполните сброс")
+    saved.update(vtor=mdw(telnet, layout["vtor"]), rcc=mdw(telnet, layout["rcc"]["enable_reg"]))
     telnet.command("halt")
     telnet.command("load_image {%s} 0x%08X bin" % (image_path.as_posix(), layout["sram_base"]))
     set_bits(telnet, layout["rcc"]["enable_reg"], layout["rcc"]["enable_bit"])   # тактирование таймера
@@ -118,22 +130,75 @@ def install(telnet, layout, image_path):
     return saved
 
 
-def teardown(telnet, layout, saved):
-    """Снять перехват: остановить таймер и прерывание, вернуть VTOR и RCC."""
-    timer, nvic = layout["timer"], layout["nvic"]
+def cleanup_gdb(args):
+    suffix = ".exe" if os.name == "nt" else ""
+    candidates = [pathlib.Path(args.cleanup_gdb)] if args.cleanup_gdb else [
+        pathlib.Path(args.toolchain) / (name + suffix) for name in ("arm-none-eabi-gdb-py3", "arm-none-eabi-gdb")]
+    for candidate in candidates:
+        if not candidate.is_file():
+            continue
+        result = subprocess.run([str(candidate), "--nx", "--batch", "-ex", "python print('RTT_GDB_READY')"],
+                                capture_output=True, text=True, timeout=15)
+        if result.returncode == 0 and "RTT_GDB_READY" in result.stdout:
+            return str(candidate.resolve())
+    raise RuntimeError("нужен GDB с Python: --cleanup-gdb <путь>")
+
+
+def teardown(telnet, layout, saved, args, out, gdb):
+    """GDB завершает обработчик, затем независимая проверка работы через SWD."""
+    report = {"ok": False, "stage": "start_gdb", "registers_restored": False}
+    result_path = out.with_suffix(".teardown.json")
+    config_path = out.with_suffix(".cleanup.json")
+    # Удалять старые результаты не нужно: исходный failed-отчёт заменяет их до запуска.
+    result_path.write_text(json.dumps(report), encoding="utf-8")
+    config_path.write_text(json.dumps({"layout": layout, "saved": saved,
+        "endpoint": "%s:%d" % (args.host, args.cleanup_gdb_port), "result": str(result_path)}), encoding="utf-8")
     try:
-        telnet.command("rtt server stop %d" % RTT_SERVER_PORT)
-        telnet.command("rtt stop")
-    except OSError:
-        pass
-    telnet.command("halt")
-    mww(telnet, timer["cr1"], 0)                          # стоп таймер
-    mww(telnet, timer["dier"], 0)
-    mww(telnet, nvic["icer"], 1 << nvic["bit"])           # выключить IRQ
-    mww(telnet, nvic["icpr"], 1 << nvic["bit"])           # снять pending
-    mww(telnet, layout["vtor"], saved["vtor"])
-    mww(telnet, layout["rcc"]["enable_reg"], saved["rcc"])
-    telnet.command("resume")
+        for command in ("rtt server stop %d" % RTT_SERVER_PORT, "rtt stop"):
+            telnet.command(command)
+        expression = "python import sys; sys.path.insert(0, %r); import rtt_cleanup; rtt_cleanup.gdb_main(%r)" % (
+            str(HERE), str(config_path))
+        with out.with_suffix(".gdb.log").open("w", encoding="utf-8") as log:
+            proc = subprocess.run([gdb, "--nx", "--batch", "-ex", expression],
+                                  stdout=log, stderr=subprocess.STDOUT, timeout=90)
+        report = json.loads(result_path.read_text(encoding="utf-8"))
+        if proc.returncode or not report.get("ok"):
+            raise RuntimeError(report.get("error", "GDB не подтвердил снятие перехвата"))
+        report["ok"] = False
+        report["stage"] = "liveness"
+        nvic = layout["nvic"]
+        mask = 1 << nvic["bit"]
+        tick = mdw(telnet, layout["tick_address"])
+        time.sleep(0.25)
+        next_tick = mdw(telnet, layout["tick_address"])
+        report.update(tick_before=tick, tick_after=next_tick,
+                      active_after_resume=mdw(telnet, nvic["iser"] + 0x200),
+                      dhcsr=mdw(telnet, 0xE000EDF0),
+                      enabled_after_resume=mdw(telnet, nvic["iser"]),
+                      pending_after_resume=mdw(telnet, nvic["ispr"]),
+                      vtor_after_resume=mdw(telnet, layout["vtor"]))
+        if not 0 < ((next_tick - tick) & 0xFFFFFFFF) < 0x80000000:
+            raise RuntimeError("tick не продвинулся после снятия перехвата")
+        if report["active_after_resume"] & mask or report["dhcsr"] & (1 << 17):
+            raise RuntimeError("ядро остановлено или IRQ таймера остаётся активным")
+        if (report["enabled_after_resume"] | report["pending_after_resume"]) & mask:
+            raise RuntimeError("IRQ таймера снова разрешён или pending после resume")
+        if report["vtor_after_resume"] != saved["vtor"]:
+            raise RuntimeError("VTOR изменился после resume")
+        report.update(ok=True, stage="complete")
+    except Exception as error:
+        report.update(ok=False, error=str(error))
+        try:
+            telnet.command("halt")  # при отказе оставить цель для диагностики, не маскировать reset
+        except OSError:
+            pass
+    finally:
+        result_path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        summary = out.with_suffix(".rtt.json")
+        data = json.loads(summary.read_text(encoding="utf-8")) if summary.exists() else {"schema": 1, "record": out.name}
+        data["teardown"] = report
+        summary.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return report
 
 
 def read_stream(telnet, layout, args, out):
@@ -352,6 +417,9 @@ def doctor(args):
             apb1 = mdw(telnet, cfg["rcc_enable_reg"])
             cr1 = mdw(telnet, cfg["timer_base"] + cfg["reg_cr1"])
             iser = mdw(telnet, cfg["nvic_iser_base"] + 4 * (cfg["timer_irq"] // 32))
+            active = mdw(telnet, cfg["nvic_iser_base"] + 0x200 + 4 * (cfg["timer_irq"] // 32))
+            checks.append(("IRQ таймера не активен", not bool(active & (1 << (cfg["timer_irq"] % 32))),
+                           "IABR=0x%08X" % active))
             running = bool(cr1 & cfg["bit_cen"]) or bool(iser & (1 << (cfg["timer_irq"] % 32)))
             checks.append(("%s свободен" % cfg["timer"], not running,
                            "включён прошивкой (CEN/IRQ)" if running else
@@ -411,24 +479,40 @@ def run(args):
               % (layout["rtt"]["control_block"], layout["rtt"]["buffer"], layout["rtt"]["size"], RTT_SERVER_PORT))
         return 0
 
+    if args.use_running or args.host not in ("127.0.0.1", "localhost"):
+        raise RuntimeError("rtt-timer требует собственный локальный OpenOCD для проверенного GDB-завершения")
+    for port in (args.port, args.cleanup_gdb_port, RTT_SERVER_PORT):
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", port))  # не подключаться к чужому GDB/пробнику
+    gdb = cleanup_gdb(args)  # до любых изменений цели
+    if len({args.cleanup_gdb_port, args.port, RTT_SERVER_PORT}) != 3:
+        raise RuntimeError("GDB, telnet и RTT должны иметь разные порты")
     process = diag.start_openocd(args, out.with_suffix(".openocd.log"))
-    telnet = diag.Telnet(args.host, args.port)
-    saved = None
+    try:
+        telnet = diag.Telnet(args.host, args.port)
+    except BaseException:
+        diag.stop_openocd(process)
+        raise
+    saved = {}
+    cleanup_report = {"ok": False}
     try:
         print("АДДИТИВНЫЙ режим: включаю таймер %s и перехват вектора (VTOR). Снимается в конце."
               % layout["timer"]["name"])
-        saved = install(telnet, layout, image_path)
+        install(telnet, layout, image_path, saved)
         print("запись %.0f с, ~%.0f Гц -> %s" % (args.seconds, layout["timer"]["actual_hz"], out.name))
         stats = read_stream(telnet, layout, args, out)
     finally:
-        if saved is not None:
-            try:
-                teardown(telnet, layout, saved)
-                print("перехват снят: таймер остановлен, VTOR и RCC восстановлены")
-            except OSError as error:
-                print("ВНИМАНИЕ: не удалось снять перехват (%s). Снимите сбросом платы." % error)
-        telnet.close()
-        diag.stop_openocd(process)
+        # Ctrl+C завершает запись, но повторный сигнал не должен оборвать восстановление.
+        previous = signal.signal(signal.SIGINT, signal.SIG_IGN)
+        try:
+            if saved:
+                cleanup_report = teardown(telnet, layout, saved, args, out, gdb)
+                print("перехват снят: GDB подтвердил выход из IRQ, регистры восстановлены, tick растёт"
+                      if cleanup_report["ok"] else "ОШИБКА снятия перехвата: " + cleanup_report.get("error", "см. отчёт"))
+        finally:
+            telnet.close()
+            diag.stop_openocd(process)
+            signal.signal(signal.SIGINT, previous)
 
     print("статистика RTT: %s" % out.with_suffix(".rtt.json"))
     print("готово: %s (%d байт)" % (out, out.stat().st_size))
@@ -438,4 +522,4 @@ def run(args):
     print("  служебных сообщений seq/tick: %d" % stats["metadata_written"])
     if stats["dropped_est"]:
         print("  потери кадров: цель пишет быстрее, чем хост читает кольцо — увеличьте --buffer или снизьте --rate")
-    return 0 if stats["written"] else 1
+    return 0 if stats["written"] and cleanup_report["ok"] else 1

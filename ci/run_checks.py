@@ -364,6 +364,11 @@ def check_site():
     return "%d pages, local links and assets resolve" % len(pages)
 
 
+def check_rtt_cleanup():
+    run([sys.executable, "-B", ROOT / "ci/test_rtt_cleanup.py"], log=OUT / "rtt-cleanup.log")
+    return "active ISR drain, stuck ISR, readback failure, RCC ownership"
+
+
 def check_rtt_record(readers=False):
     args = [sys.executable, "-B", ROOT / "ci/test_rtt_record.py"]
     if readers:
@@ -423,6 +428,7 @@ KITS = [
     ("stm32-diag-record: telnet survives async OpenOCD messages", check_diag_telnet_async),
     ("stm32-diag-record: rtt-timer frame parser", check_rtt_frames),
     ("stm32-diag-record: RTT recording evidence", check_rtt_record),
+    ("stm32-diag-record: GDB cleanup state machine", check_rtt_cleanup),
 ]
 
 

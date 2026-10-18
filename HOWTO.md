@@ -298,3 +298,12 @@ rtt-timer сохраняет исходные `/_diag/rtt/seq`, `/_diag/rtt/tick
 Проверка без платы: `python3 ci/test_rtt_record.py`; с установленными `mcap` и `rosbags` —
 `python3 ci/test_rtt_record.py --readers`. Это синтетический транспорт с настоящими писателями файлов,
 а не аппаратная проверка таймеров и снятия перехвата.
+
+### RTT: зависание после снятия перехвата
+
+`running` в OpenOCD означает исполнение инструкций, включая бесконечный Default_Handler. Возврат
+VTOR/RCC и очистка pending не доказывают выхода из активного ISR: проверьте IABR и продвижение tick.
+В 1.7.0 это делает GDB-завершение (`--cleanup-gdb`, `--cleanup-gdb-port 3334`). При отказе сохраните
+mcap/bag, `.rtt.json`, `.teardown.json`, `.gdb.log` и `.openocd.log` до сброса платы. После фиксации
+диагностики восстановите известную прошивку сбросом; не используйте подмену PC как штатное завершение.
+Проверки без платы: `python3 ci/test_rtt_cleanup.py` и `python3 ci/test_rtt_record.py`.

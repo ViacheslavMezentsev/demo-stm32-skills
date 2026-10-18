@@ -75,7 +75,8 @@ def openocd_base(args):
     command += ["-f", args.target]
     for extra in args.openocd_command:
         command += ["-c", extra]
-    return command + ["-c", "bindto 127.0.0.1", "-c", "gdb_port disabled", "-c", "tcl_port disabled"]
+    gdb_port = str(args.cleanup_gdb_port) if getattr(args, "backend", "") == "rtt-timer" and not getattr(args, "doctor", False) else "disabled"
+    return command + ["-c", "bindto 127.0.0.1", "-c", "gdb_port " + gdb_port, "-c", "tcl_port disabled"]
 
 
 def openocd_command(args):
@@ -535,6 +536,8 @@ def main(argv=None):
     parser.add_argument("--timer", default="", help="rtt-timer: свободный таймер TIM2 (по умолч.), TIM3, TIM4, TIM5")
     parser.add_argument("--sram-base", default="", help="rtt-timer: свободное окно SRAM (hex), напр. 0x2001E000")
     parser.add_argument("--toolchain", default="", help="rtt-timer: каталог bin тулчейна arm-none-eabi (сборка заглушки)")
+    parser.add_argument("--cleanup-gdb", default="", help="rtt-timer: GDB с Python для снятия перехвата")
+    parser.add_argument("--cleanup-gdb-port", type=int, default=3334, help="rtt-timer: GDB-порт OpenOCD (3334)")
     parser.add_argument("--buffer", type=int, default=4096, help="rtt-timer: размер кольцевого буфера, байт")
     parser.add_argument("--timer-clock-hz", type=int, help="rtt-timer: тактовая частота таймера (иначе из boards.toml)")
     parser.add_argument("--tick-expr", default="&platform_tick",
