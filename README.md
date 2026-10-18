@@ -2,7 +2,7 @@
 
 Набор навыков (Agent Skills) для ИИ-ассистентов, помогающих в разработке под STM32 и совместимые микроконтроллеры: настройка сборки, генерация кода, архитектура прошивок, отладка и диагностика.
 
-Наглядные объяснения отдельных навыков — на [сайте репозитория](https://viacheslavmezentsev.github.io/demo-stm32-skills/) (пока stm32-diag-record).
+Наглядные объяснения отдельных навыков — на [сайте репозитория](https://viacheslavmezentsev.github.io/demo-stm32-skills/) (stm32-diag-record, stm32-renode-emulator, stm32-ros-alt-channel, embedded-tech-spec).
 
 Все навыки оформлены по [спецификации Agent Skills](https://agentskills.io/specification) и подходят для Claude Code, Cursor, Codex и других агентов, поддерживающих этот формат.
 
@@ -38,16 +38,16 @@
 |-------|------------|
 | [stm32-rtt-console](stm32-rtt-console/) | Консоль RTT через OpenOCD и ST-Link без занятия UART |
 | [stm32-swo-trace](stm32-swo-trace/) | Трассировка SWO/ITM и профилирование по DWT |
-| [stm32-ros-alt-channel](stm32-ros-alt-channel/) | Вывод переменных и регистров в ROS1 по SWD или rosserial |
+| [stm32-ros-alt-channel](stm32-ros-alt-channel/) | Вывод переменных и регистров в ROS1 по SWD или rosserial; [как это работает](https://viacheslavmezentsev.github.io/demo-stm32-skills/skills/stm32-ros-alt-channel/) |
 | [stm32-diag-record](stm32-diag-record/) | Запись переменных и регистров по SWD или из Renode в mcap или bag без ROS (STM32 и другие Cortex-M); [как это работает](https://viacheslavmezentsev.github.io/demo-stm32-skills/skills/stm32-diag-record/) |
-| [stm32-renode-emulator](stm32-renode-emulator/) | Проверка прошивки в эмуляторе Renode без платы |
+| [stm32-renode-emulator](stm32-renode-emulator/) | Проверка прошивки в эмуляторе Renode без платы; [как это работает](https://viacheslavmezentsev.github.io/demo-stm32-skills/skills/stm32-renode-emulator/) |
 | [weact-logic-analyzer](weact-logic-analyzer/) | Измерения логическим анализатором WeAct через sigrok-cli |
 
 ### Документация и процесс
 
 | Навык | Назначение |
 |-------|------------|
-| [embedded-tech-spec](embedded-tech-spec/) | Техническое задание на модуль прошивки с требованиями и тест-кейсами |
+| [embedded-tech-spec](embedded-tech-spec/) | Техническое задание на модуль прошивки с требованиями и тест-кейсами; [как это работает](https://viacheslavmezentsev.github.io/demo-stm32-skills/skills/embedded-tech-spec/) |
 | [ap-patch-generation](ap-patch-generation/) | Патчи в формате AP для чатов без доступа к файловой системе |
 
 ## Установка

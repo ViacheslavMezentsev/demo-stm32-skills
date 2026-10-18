@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="ru" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Как устроен embedded-tech-spec</title>
+<meta name="description" content="Инфографика навыка embedded-tech-spec: техническое задание на модуль встраиваемой системы с ревизиями, нумерованными требованиями, тест-кейсами и матрицей прослеживаемости.">
+<link rel="stylesheet" href="../../assets/site.css">
+<script src="../../assets/theme.js"></script>
+</head>
+<body>
+<header class="site-header">
+  <div class="inner">
+    <a class="brand" href="../../">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+        <rect x="6" y="6" width="12" height="12" rx="1.5"/><rect x="9.5" y="9.5" width="5" height="5" rx="0.5"/>
+        <path d="M9 2.5v3.5M12 2.5v3.5M15 2.5v3.5M9 18v3.5M12 18v3.5M15 18v3.5M2.5 9h3.5M2.5 12h3.5M2.5 15h3.5M18 9h3.5M18 12h3.5M18 15h3.5"/>
+      </svg>
+      <span>demo-stm32-skills</span>
+    </a>
+    <nav class="site-nav" aria-label="Разделы">
+      <a href="../../#skills">Навыки</a>
+      <a class="wide" href="https://github.com/ViacheslavMezentsev/demo-stm32-skills">Репозиторий</a>
+      <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Тема">
+        <svg class="icon-dark" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M9.6 1.1a.75.75 0 0 1 .3.9 5.5 5.5 0 0 0 4.1 7.3.75.75 0 0 1 .4 1.3A7 7 0 1 1 8.3 1a.75.75 0 0 1 1.3.1ZM7.4 2.6a5.5 5.5 0 1 0 5.4 8.6 7 7 0 0 1-5.4-8.6Z"/></svg>
+        <svg class="icon-light" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 11.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm0 1.5a5 5 0 1 1 0-10 5 5 0 0 1 0 10ZM8 0a.75.75 0 0 1 .75.75v.5a.75.75 0 0 1-1.5 0v-.5A.75.75 0 0 1 8 0Zm0 14a.75.75 0 0 1 .75.75v.5a.75.75 0 0 1-1.5 0v-.5A.75.75 0 0 1 8 14ZM0 8a.75.75 0 0 1 .75-.75h.5a.75.75 0 0 1 0 1.5h-.5A.75.75 0 0 1 0 8Zm14 0a.75.75 0 0 1 .75-.75h.5a.75.75 0 0 1 0 1.5h-.5A.75.75 0 0 1 14 8ZM2.3 2.3a.75.75 0 0 1 1.06 0l.36.36a.75.75 0 0 1-1.06 1.06l-.36-.36a.75.75 0 0 1 0-1.06Zm9.98 9.98a.75.75 0 0 1 1.06 0l.36.36a.75.75 0 0 1-1.06 1.06l-.36-.36a.75.75 0 0 1 0-1.06ZM13.7 2.3a.75.75 0 0 1 0 1.06l-.36.36a.75.75 0 1 1-1.06-1.06l.36-.36a.75.75 0 0 1 1.06 0ZM3.72 12.28a.75.75 0 0 1 0 1.06l-.36.36a.75.75 0 0 1-1.06-1.06l.36-.36a.75.75 0 0 1 1.06 0Z"/></svg>
+        <svg class="icon-auto" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0Zm0 1.5v13a6.5 6.5 0 0 0 0-13Z"/></svg>
+      </button>
+    </nav>
+  </div>
+</header>
+<main>
+<div class="breadcrumb"><a href="../../">demo-stm32-skills</a> / <a href="../../#skills">навыки</a> / embedded-tech-spec</div>
+<h1>Как устроен embedded-tech-spec</h1>
+<p class="lead">Навык помогает вести техническое задание на модуль прошивки как живой документ. Каждое требование
+получает постоянный номер, на который ссылаются код, тесты и матрица прослеживаемости. Поэтому номера не
+переиспользуются, изменения помечаются ревизией, а каждая нормативная строка проверяема.</p>
+
+<div class="box">
+  <h2>Путь от исходных данных к проверенному ТЗ</h2>
+  <div class="legend">
+    <span class="offline">исходные данные</span>
+    <span class="live">документ</span>
+    <span class="alt">связи требований</span>
+    <span class="view">проверка</span>
+  </div>
+
+  <div class="stage offline">
+    <div class="stage-title">1. Исходные данные</div>
+    <div class="stage-note">Метод формирования записывается в реквизиты: с нуля, по коду или приведение к целевой реализации.</div>
+    <div class="flow">
+      <div class="node"><h3>Код модуля</h3><p>текущее поведение для обратной разработки</p></div>
+      <div class="arrow">и</div>
+      <div class="node"><h3>Журналы и архитектура</h3><p>логи загрузки, планы, описание платформы</p></div>
+      <div class="arrow">и</div>
+      <div class="node"><h3>Ответы заказчика</h3><p>решения по открытым вопросам каждой ревизии</p></div>
+      <div class="arrow">в</div>
+      <div class="node"><h3>template.md</h3><p>шаблон нового документа ревизии 1.0</p><span class="mono">TECHNICAL_SPECIFICATION_&lt;МОДУЛЬ&gt;.md</span></div>
+    </div>
+  </div>
+
+  <div class="stage live">
+    <div class="stage-title">2. Документ: порядок частей фиксирован</div>
+    <div class="stage-note">Разделы 1–2 и приложения — информативные, остальные — нормативные.</div>
+    <div class="flow">
+      <div class="node"><h3>Реквизиты и ревизии</h3><p>история ревизий, блоки изменений, новейший сверху</p></div>
+      <div class="arrow"></div>
+      <div class="node"><h3>Введение и описание</h3><p>соглашения документа, контекст, границы, ограничения платформы</p></div>
+      <div class="arrow"></div>
+      <div class="node"><h3>Требования</h3><p>предметные разделы, жизненный цикл и API, интерфейсы, нефункциональные</p></div>
+      <div class="arrow"></div>
+      <div class="node"><h3>Верификация</h3><p>тест-кейсы TC-NN, матрица прослеживаемости, допущения и вопросы</p></div>
+      <div class="arrow"></div>
+      <div class="node"><h3>Приложения</h3><p>константы, раскладки, расхождения с кодом, примеры</p></div>
+    </div>
+  </div>
+
+  <div class="stage alt">
+    <div class="stage-title">3. Один номер связывает требование, код и тест</div>
+    <div class="stage-note">Если номер сдвинуть, ссылки из кода и тестов станут ложными.</div>
+    <div class="flow">
+      <div class="node"><h3>Пункт ТЗ</h3><p>одно проверяемое утверждение</p><span class="mono">5.3.10. setValue ДОЛЖЕН …</span></div>
+      <div class="arrow both">ссылка</div>
+      <div class="node"><h3>Код</h3><p>комментарий у реализации</p><span class="mono">// ТЗ 5.3.10</span></div>
+      <div class="arrow both">ссылка</div>
+      <div class="node"><h3>Тест-кейс</h3><p>проверка методом A, T, I или D</p><span class="mono">TC-22</span></div>
+      <div class="arrow both">строка</div>
+      <div class="node"><h3>Матрица</h3><p>требование → реализация → проверка</p></div>
+    </div>
+  </div>
+
+  <div class="stage view">
+    <div class="stage-title">4. Механическая проверка</div>
+    <div class="stage-note">Скрипт не понимает смысла, но ловит типовые ошибки перенумерации и выпуска ревизий.</div>
+    <div class="flow">
+      <div class="node"><h3>check_spec.py</h3><p>разбирает Markdown-файл ТЗ</p><span class="mono">python3 scripts/check_spec.py ТЗ.md --strict</span></div>
+      <div class="arrow">находит</div>
+      <div class="node"><h3>Замечания</h3><p>повторы номеров, ссылки в пустоту, требования вне матрицы, пункты без маркера, ревизии без блока изменений</p></div>
+      <div class="arrow">затем</div>
+      <div class="node"><h3>Чтение глазами</h3><p>однозначно ли требование и проверяемо ли указанным методом</p></div>
+    </div>
+  </div>
+</div>
+
+<div class="box">
+  <h2>Цикл новой ревизии</h2>
+  <div class="cycle">
+    <div class="step"><b>Ответы</b>Каждый ответ заказчика переносится в требование, а не только в таблицу вопросов.</div>
+    <div class="step"><b>Пометки</b>Новый или изменённый пункт получает <code>(р.X.Y)</code>; исключённый остаётся с номером.</div>
+    <div class="step"><b>История</b>Реквизиты, строка истории, блок «Изменения ревизии X.Y» над прежними.</div>
+    <div class="step"><b>Вопросы</b>Закрытые меняют статус и ссылаются на пункты с решением, новые добавляются.</div>
+    <div class="step"><b>Проверка</b>Тест-кейсы, матрица, константы и расхождения с кодом, затем <code>check_spec.py</code>.</div>
+  </div>
+</div>
+
+<div class="cols">
+  <div class="box">
+    <h2>Из чего состоит пункт требования</h2>
+    <pre><span class="tok-k">5.3.10.</span> setValue <span class="tok-s">ДОЛЖЕН</span> вернуть ошибку для ключа
+вне области. <span class="tok-k">`[U]`</span> <span class="tok-c">(р.1.6)</span></pre>
+    <table>
+      <tr><th>Часть</th><th>Смысл</th></tr>
+      <tr><td><code>5.3.10.</code></td><td>раздел, подраздел, пункт; номер постоянный</td></tr>
+      <tr><td><code>ДОЛЖЕН</code></td><td>модальность: ДОЛЖЕН, НЕ ДОЛЖЕН, СЛЕДУЕТ, МОЖЕТ</td></tr>
+      <tr><td><code>[R]</code> <code>[N]</code> <code>[U]</code></td><td>происхождение: из кода, новое, уточнение</td></tr>
+      <tr><td><code>(р.1.6)</code></td><td>ревизия, в которой пункт создан или изменён</td></tr>
+    </table>
+  </div>
+  <div class="box">
+    <h2>Правила, которые держат документ</h2>
+    <ul>
+      <li>номера пунктов и тест-кейсов не переиспользуются и не сдвигаются;</li>
+      <li>у требования есть граница и метод проверки: «не более 200 мс, замер на оборудовании»;</li>
+      <li>предположенное — в допущения, неизвестное — в открытые вопросы, а не додумывается;</li>
+      <li>одно требование живёт в одном месте, другие места на него ссылаются;</li>
+      <li>проверенное и непроверенное различаются явно: «проверено симуляцией», «эскиз».</li>
+    </ul>
+    <p style="margin-top:10px">Эталон — ТЗ ревизии 1.8 на подсистему параметров во Flash-эмуляции EEPROM, около 2000 строк (<code>references/example-eeprom.md</code>).</p>
+  </div>
+</div>
+<div class="box">
+  <h2>Насколько проверено</h2>
+  <div class="cols" style="margin-bottom:0">
+    <div><h3 style="color: var(--success)">Проверяется в CI репозитория</h3><ul><li><code>check_spec.py</code> на шаблоне и на эталонном ТЗ: ошибок нет</li></ul></div>
+    <div><h3 style="color: var(--attention)">Ещё не проверено</h3><ul><li>смысловая проверка требований — только чтением; скрипт её не заменяет</li></ul></div>
+  </div>
+</div>
+
+<p><a href="https://github.com/ViacheslavMezentsev/demo-stm32-skills/tree/main/embedded-tech-spec">Описание навыка (SKILL.md), шаблон и проверка</a> · версия 0.1</p>
+</main>
+<footer class="site-footer">
+  <div class="inner">
+    <span>demo-stm32-skills · лицензия MIT</span>
+    <a href="https://github.com/ViacheslavMezentsev/demo-stm32-skills">исходники на GitHub</a>
+    <a href="https://github.com/ViacheslavMezentsev/stm32-skills-probe">прошивка-зонд stm32-skills-probe</a>
+  </div>
+</footer>
+</body>
+</html>

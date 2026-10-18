@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="ru" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Как работает stm32-renode-emulator</title>
+<meta name="description" content="Инфографика навыка stm32-renode-emulator: прогон стартового лога прошивки в Renode или QEMU и проверка лога по ожиданиям и данным ELF.">
+<link rel="stylesheet" href="../../assets/site.css">
+<script src="../../assets/theme.js"></script>
+</head>
+<body>
+<header class="site-header">
+  <div class="inner">
+    <a class="brand" href="../../">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+        <rect x="6" y="6" width="12" height="12" rx="1.5"/><rect x="9.5" y="9.5" width="5" height="5" rx="0.5"/>
+        <path d="M9 2.5v3.5M12 2.5v3.5M15 2.5v3.5M9 18v3.5M12 18v3.5M15 18v3.5M2.5 9h3.5M2.5 12h3.5M2.5 15h3.5M18 9h3.5M18 12h3.5M18 15h3.5"/>
+      </svg>
+      <span>demo-stm32-skills</span>
+    </a>
+    <nav class="site-nav" aria-label="Разделы">
+      <a href="../../#skills">Навыки</a>
+      <a class="wide" href="https://github.com/ViacheslavMezentsev/demo-stm32-skills">Репозиторий</a>
+      <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Тема">
+        <svg class="icon-dark" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M9.6 1.1a.75.75 0 0 1 .3.9 5.5 5.5 0 0 0 4.1 7.3.75.75 0 0 1 .4 1.3A7 7 0 1 1 8.3 1a.75.75 0 0 1 1.3.1ZM7.4 2.6a5.5 5.5 0 1 0 5.4 8.6 7 7 0 0 1-5.4-8.6Z"/></svg>
+        <svg class="icon-light" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 11.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm0 1.5a5 5 0 1 1 0-10 5 5 0 0 1 0 10ZM8 0a.75.75 0 0 1 .75.75v.5a.75.75 0 0 1-1.5 0v-.5A.75.75 0 0 1 8 0Zm0 14a.75.75 0 0 1 .75.75v.5a.75.75 0 0 1-1.5 0v-.5A.75.75 0 0 1 8 14ZM0 8a.75.75 0 0 1 .75-.75h.5a.75.75 0 0 1 0 1.5h-.5A.75.75 0 0 1 0 8Zm14 0a.75.75 0 0 1 .75-.75h.5a.75.75 0 0 1 0 1.5h-.5A.75.75 0 0 1 14 8ZM2.3 2.3a.75.75 0 0 1 1.06 0l.36.36a.75.75 0 0 1-1.06 1.06l-.36-.36a.75.75 0 0 1 0-1.06Zm9.98 9.98a.75.75 0 0 1 1.06 0l.36.36a.75.75 0 0 1-1.06 1.06l-.36-.36a.75.75 0 0 1 0-1.06ZM13.7 2.3a.75.75 0 0 1 0 1.06l-.36.36a.75.75 0 1 1-1.06-1.06l.36-.36a.75.75 0 0 1 1.06 0ZM3.72 12.28a.75.75 0 0 1 0 1.06l-.36.36a.75.75 0 0 1-1.06-1.06l.36-.36a.75.75 0 0 1 1.06 0Z"/></svg>
+        <svg class="icon-auto" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0Zm0 1.5v13a6.5 6.5 0 0 0 0-13Z"/></svg>
+      </button>
+    </nav>
+  </div>
+</header>
+<main>
+<div class="breadcrumb"><a href="../../">demo-stm32-skills</a> / <a href="../../#skills">навыки</a> / stm32-renode-emulator</div>
+<h1>Как работает stm32-renode-emulator</h1>
+<p class="lead">Прошивка запускается в эмуляторе вместо платы, печатает стартовый лог, а скрипт проверяет, что лог
+полный, правильный и принадлежит именно этой сборке. Так гипотезы проверяются до аппаратного опыта и в CI, не
+занимая стенд.</p>
+
+<div class="box">
+  <h2>Путь данных</h2>
+  <div class="legend">
+    <span class="offline">прошивка и ожидания</span>
+    <span class="live">прогон в эмуляторе</span>
+    <span class="alt">отладка</span>
+    <span class="view">проверка и результат</span>
+  </div>
+
+  <div class="stage offline">
+    <div class="stage-title">1. Что подаётся на вход</div>
+    <div class="stage-note">Прошивка пишет лог через семихостинг: эмулятору не нужна модель UART.</div>
+    <div class="flow">
+      <div class="node"><h3>прошивка.elf</h3><p>лог через семихостинг, строки с префиксом времени</p><span class="mono">[   0.001] boot: start</span></div>
+      <div class="arrow">и</div>
+      <div class="node"><h3>Секции ELF</h3><p>версия, сборка и ревизия в <code>.fw_version</code>, контрольная сумма в <code>.checksum</code></p><span class="mono">u8 major, minor, patch; u16 build</span></div>
+      <div class="arrow">и</div>
+      <div class="node"><h3>expected.toml</h3><p>какие строки обязаны быть, каких быть не должно</p><span class="mono">[require].lines, [forbid].lines</span></div>
+    </div>
+  </div>
+
+  <div class="stage live">
+    <div class="stage-title">2. Прогон: run.py выбирает эмулятор и машину</div>
+    <div class="stage-note">Каждая попытка пишет в новый каталог, прежние результаты не затираются.</div>
+    <div class="flow">
+      <div class="node"><h3>run.py</h3><p>находит эмулятор, проверяет версию, готовит макет</p><span class="mono">--profile G474 | F411, --platform</span></div>
+      <div class="arrow">G474</div>
+      <div class="node"><h3>Renode 1.17</h3><p>макет Cortex-M4 с памятью и заглушками периферии или своя модель платы</p><span class="mono">stm32g4_mock.repl; 1.16.1 через renode_compat.py</span></div>
+      <div class="arrow">или F411</div>
+      <div class="node"><h3>QEMU</h3><p>машина netduinoplus2 (STM32F405, тот же Cortex-M4); прошивка завершает прогон сама</p><span class="mono">SYS_EXIT</span></div>
+      <div class="arrow">семихостинг</div>
+      <div class="node"><h3>Каталог прогона</h3><p>лог прошивки, журнал эмулятора, описание прогона</p><span class="mono">startup.log, emulator.log, run.json</span></div>
+    </div>
+    <div class="alt-row alt">
+      <div class="node"><h3>Отладка вместо прогона</h3><p><code>debug.resc</code> поднимает GDB-сервер Renode и держит ядро до подключения, как ключ <code>-S</code> у QEMU.</p><span class="mono">arm-none-eabi-gdb firmware.elf -ex "target remote :3334"</span></div>
+    </div>
+  </div>
+
+  <div class="stage view">
+    <div class="stage-title">3. Проверка лога</div>
+    <div class="stage-note">Запускается ключом <code>--verify</code>; итог — код возврата и отчёт.</div>
+    <div class="flow">
+      <div class="node"><h3>check_startup_log.py</h3><p>сверяет лог с ожиданиями и подставляет данные из ELF</p><span class="mono">{version}, {build}, {crc32}, {size}</span></div>
+      <div class="arrow">пишет</div>
+      <div class="node"><h3>Отчёт</h3><p>какие правила выполнены, какие нет</p><span class="mono">startup-log-report.json</span></div>
+      <div class="arrow">итог</div>
+      <div class="node"><h3>Код возврата</h3><p>0 — PASS (без <code>--verify</code> — CAPTURED), 1 — лог не прошёл проверку, 2 — ошибка прогона (нет эмулятора, лога, таймаут)</p><span class="mono">годится для CI</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="box">
+  <h2>Что проверяется в логе</h2>
+  <div class="cycle">
+    <div class="step"><b>Полнота</b><code>min_lines</code>: оборванный лог не пройдёт.</div>
+    <div class="step"><b>Начало и конец</b><code>first_line</code>, <code>last_line</code>: регулярные выражения.</div>
+    <div class="step"><b>Обязательное</b><code>[require].lines</code>: каждое выражение должно найтись.</div>
+    <div class="step"><b>Запрещённое</b><code>[forbid].lines</code>: признаки отказа или чужой среды.</div>
+    <div class="step"><b>Эта сборка</b>Версия, номер сборки и CRC из ELF должны совпасть с напечатанными.</div>
+    <div class="step"><b>Источник</b>Строка без префикса времени — ошибка: лог должен идти от журнала прошивки.</div>
+  </div>
+</div>
+
+<div class="cols">
+  <div class="box">
+    <h2>Маршруты</h2>
+    <table>
+      <tr><th>Профиль</th><th>Эмулятор и машина</th><th>Вывод</th></tr>
+      <tr><td><code>G474</code></td><td>Renode 1.17, макет <code>stm32g4_mock.repl</code> или модель своей платы</td><td>семихостинг в файл</td></tr>
+      <tr><td><code>F411</code></td><td>QEMU, <code>netduinoplus2</code></td><td>семихостинг в chardev-файл</td></tr>
+    </table>
+    <pre>python scripts/run.py --profile G474 --elf build/firmware.elf \
+    --verify --expected boot.toml
+python scripts/run.py --profile F411 --elf build/firmware.elf \
+    --qemu qemu-system-arm</pre>
+  </div>
+  <div class="box">
+    <h2>Версии Renode</h2>
+    <ul>
+      <li>1.17 — основная. 1.16.1 работает с предупреждением, другие версии отклоняются.</li>
+      <li>В 1.17 семихостинг — отдельный обработчик <code>CPU.SemihostingHandler</code>, в 1.16.1 его UART висит на процессоре. Один макет обе версии не принимают, <code>renode_compat.py</code> готовит копию под найденную.</li>
+      <li>Тип ядра <code>cortex-m4</code>, а не <code>cortex-m4f</code>: в 1.16.1 второй отдаёт CPUID Cortex-M7. Сравнивайте номер ядра <code>0xC24</code>, а не ревизию.</li>
+    </ul>
+  </div>
+</div>
+
+<div class="box">
+  <h2>Что важно понимать</h2>
+  <div class="facts">
+    <div class="fact"><b>Эмулятор не плата</b>Вывод из прогона помечается «emulator». Аппаратные выводы из него не следуют.</div>
+    <div class="fact"><b>Периферия — заглушки</b>Запись сохраняется, флаги готовности сами не встают. Ожидание PLL или АЦП в эмуляторе зависнет.</div>
+    <div class="fact"><b>Время виртуальное</b>Длительности и порядок прерываний не совпадают с железом.</div>
+    <div class="fact"><b>Renode останавливается сам</b>Через одну виртуальную секунду. QEMU ждёт <code>SYS_EXIT</code> от прошивки или таймаут.</div>
+    <div class="fact"><b>Адреса сверены</b>Адреса заглушек макета G474 сверены с SVD STM32G474.</div>
+    <div class="fact"><b>Не только STM32</b>Подходит любой Cortex-M, для которого есть модель в Renode или машина в QEMU.</div>
+  </div>
+</div>
+<div class="box">
+  <h2>Насколько проверено</h2>
+  <div class="cols" style="margin-bottom:0">
+    <div><h3 style="color: var(--success)">Проверяется в CI репозитория</h3><ul><li>прошивка-зонд для F411CE, F401CC и F103C8 в Renode 1.17 с проверкой лога</li><li>F411CE и F401CC в QEMU с выходом по времени</li><li>оборванный лог отклоняется</li><li>адреса макета G474 и модели зонда сверены с SVD</li><li>подготовка макета под 1.16.1 (<code>renode_compat.py</code>, без запуска самой 1.16.1)</li></ul></div>
+    <div><h3 style="color: var(--attention)">Ещё не проверено</h3><ul><li>GDB-сервер Renode вне песочницы (R17)</li><li>соответствие эмулятора железу (R16)</li></ul></div>
+  </div>
+</div>
+
+<p><a href="https://github.com/ViacheslavMezentsev/demo-stm32-skills/tree/main/stm32-renode-emulator">Описание навыка (SKILL.md) и скрипты</a> · версия 1.1.0</p>
+</main>
+<footer class="site-footer">
+  <div class="inner">
+    <span>demo-stm32-skills · лицензия MIT</span>
+    <a href="https://github.com/ViacheslavMezentsev/demo-stm32-skills">исходники на GitHub</a>
+    <a href="https://github.com/ViacheslavMezentsev/stm32-skills-probe">прошивка-зонд stm32-skills-probe</a>
+  </div>
+</footer>
+</body>
+</html>

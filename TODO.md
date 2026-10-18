@@ -37,6 +37,7 @@
 - [ ] **Повторные исследования на стенде** по [плану](docs/research-plan.md): прошивка-зонд (R0),
       затем методика анализатора и границы эмулятора (R15, R12, R16), затем основные таблицы
       stm32-rtt-console, stm32-swo-trace, stm32-ros-alt-channel, weact-logic-analyzer.
-- [ ] **Включить GitHub Pages** (владелец): Settings -> Pages -> Source: GitHub Actions; затем страницы для
-      других навыков по образцу stm32-diag-record.
+- [x] **Включить GitHub Pages** (2026-10-18, владелец; ветка `claude/pages`).
+- [ ] **Страницы сайта для других навыков** — по мере проверки (сейчас: diag-record, renode-emulator,
+      ros-alt-channel, embedded-tech-spec; в работе: `claude/site-cards`).
 - [ ] **Проверка stm32-cubemx-codegen** на установленном STM32CubeMX (в CI недоступен).
