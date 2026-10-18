@@ -722,7 +722,14 @@ class Emulation(object):
             shutil.rmtree(work)
         work.mkdir(parents=True)
         env = dict(self.env, GDB=self.gdb())
-        spec = self.probe / "tools" / "diag-fields.toml"
+        # Спецификация задаётся здесь, а не из репозитория зонда: закреплённый коммит может не содержать
+        # tools/diag-fields.toml. Поля — только символы RAM зонда (без svd:), поэтому SVD не нужен.
+        spec = work / "fields.toml"
+        spec.write_text("".join(
+            '[[field]]\ntopic = "%s"\nmessage = "std_msgs/UInt32"\nkind = "uint32"\nexpr = "%s"\n\n' % pair
+            for pair in (("/probe/frames", "&probe_telemetry.frames"), ("/probe/counter", "&probe_counter"),
+                         ("/probe/tick_ms", "&platform_tick"), ("/probe/work", "&probe_telemetry.work_cycles"))),
+            encoding="utf-8")
         addresses = work / "addresses.json"
         run([sys.executable, "-B", ROS_SKILL / "scripts" / "resolve_addresses.py", "--elf", elf, "--spec", spec,
              "--out", addresses], log=work / "resolve.log", env=env, timeout=120)
