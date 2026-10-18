@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Запись диагностики с платы без ROS: ST-Link -> OpenOCD -> файл bag или mcap.
+"""Запись диагностики с платы без ROS: ST-Link -> OpenOCD (или Renode) -> файл bag или mcap.
 
 НАЗНАЧЕНИЕ. Снять выбранные поля прошивки в файл для офлайн-разбора (PlotJuggler, `mcap info`,
 `rosbag info`). ROS не нужен ни для записи, ни для чтения: форматы пишут `bag_writer.py` и
@@ -8,6 +8,9 @@
 ЦЕПОЧКА. ST-Link (SWD) -> OpenOCD (telnet) -> чтение 32-битных слов по адресам -> сериализация
 сообщений -> файл. Адреса считаются офлайн по ELF (и SVD), плата при этом не нужна. OpenOCD
 подключается без сброса: прошивка продолжает работать (сброс — только по ключу --reset).
+
+БЕЗ ПЛАТЫ. `--backend renode` читает те же адреса из работающего Renode через его telnet-монитор
+(`renode --port 1234`, команда `sysbus ReadDoubleWord`); Renode запускается отдельно.
 
 КЛЮЧИ СОВПАДАЮТ С НАВЫКОМ stm32-ros-alt-channel там, где смысл общий (--out, --format/--record,
 --seconds, --elf, --svd, --doctor, --dryrun).
@@ -18,6 +21,7 @@
     python record_diag.py --record mcap --seconds 30
     python record_diag.py --record bag --seconds 30 --compress bz2 --out build/my.bag
     python record_diag.py --target target/stm32f1x.cfg --serial <серийный номер> --record mcap
+    python record_diag.py --backend renode --port 1234 --record mcap --seconds 10
 """
 import argparse
 import json
@@ -40,6 +44,9 @@ from mcap_writer import McapWriter  # noqa: E402
 KINDS = ("uint32", "int32", "float32", "uint32_seconds")
 WORD_LINE = re.compile(r"^0x([0-9a-fA-F]+):((?:\s+[0-9a-fA-F]{8})+)", re.M)
 CLUSTER_BYTES = 256  # соседние адреса в пределах окна читаются одной командой mdw
+DEFAULT_PORTS = {"openocd": 4444, "renode": 1234}
+RENODE_PROMPT = re.compile(r"(?:^|\n)\(([^()\n]*)\) ")
+RENODE_VALUE = re.compile(r"ReadDoubleWord 0x([0-9A-Fa-f]+)[^\n]*\n\s*(0x[0-9A-Fa-f]+)\s*\n")
 
 
 # ---------------------------------------------------------------- окружение
@@ -185,6 +192,86 @@ def read_words(telnet, addresses):
     return words
 
 
+class OpenOcdReader(object):
+    """Чтение слов через telnet OpenOCD (mdw)."""
+
+    def __init__(self, host, port):
+        self.telnet = Telnet(host, port)
+
+    def read_words(self, addresses):
+        return read_words(self.telnet, addresses)
+
+    def close(self):
+        self.telnet.close()
+
+
+class RenodeReader(object):
+    """Чтение слов через telnet-монитор Renode: эмуляция при этом не останавливается.
+
+    Команды `sysbus ReadDoubleWord` отправляются пакетом, ответы разбираются по эху адреса.
+    """
+
+    def __init__(self, host, port, machine="", timeout=2.0):
+        self.sock = socket.create_connection((host, port), timeout=10)
+        self.sock.settimeout(timeout)
+        time.sleep(0.3)
+        self._drain()  # приветствие и вывод команд, выполненных до подключения
+        if machine:
+            self.sock.sendall(('mach set "%s"\n' % machine).encode("utf-8"))
+        else:
+            self.sock.sendall(b"\n")
+        text = self._read_prompts(1)
+        names = RENODE_PROMPT.findall(text or "")
+        self.machine = names[-1] if names else ""
+        if not self.machine:
+            self.close()
+            raise SystemExit("монитор Renode не ответил на %s:%d" % (host, port))
+        if self.machine == "monitor":
+            self.close()
+            raise SystemExit("в мониторе Renode не выбрана машина: --machine ИМЯ (как в mach create)")
+
+    def _drain(self):
+        self.sock.settimeout(0.2)
+        try:
+            while self.sock.recv(65536):
+                pass
+        except socket.timeout:
+            pass
+        finally:
+            self.sock.settimeout(2.0)
+
+    def _read_prompts(self, count):
+        """Текст до `count` приглашений вида '(машина) ' или до тайм-аута."""
+        data = b""
+        while True:
+            text = Telnet._clean(data)
+            if len(RENODE_PROMPT.findall(text)) >= count:
+                return text
+            try:
+                chunk = self.sock.recv(65536)
+            except socket.timeout:
+                return text
+            if not chunk:
+                raise ConnectionError("Renode закрыл соединение")
+            data += chunk
+
+    def read_words(self, addresses):
+        pending = sorted(set(addresses))
+        lines = "".join("sysbus ReadDoubleWord 0x%08X\n" % address for address in pending)
+        self.sock.sendall(lines.encode("ascii"))
+        text = self._read_prompts(len(pending))
+        return {int(address, 16): int(value, 16) for address, value in RENODE_VALUE.findall(text)}
+
+    def close(self):
+        self.sock.close()
+
+
+def open_reader(args):
+    if args.backend == "renode":
+        return RenodeReader(args.host, args.port, args.machine)
+    return OpenOcdReader(args.host, args.port)
+
+
 def aligned_needed(address):
     base = address & ~3
     return [base] if base == address else [base, base + 4]
@@ -215,27 +302,36 @@ def convert(word, kind, shift=0, mask=0xFFFFFFFF):
 # ---------------------------------------------------------------- доктор
 
 def doctor(args):
-    checks = [("Python 3.9+", sys.version_info >= (3, 9), sys.version.split()[0]),
-              ("OpenOCD", bool(args.openocd), args.openocd or "нет в PATH: --openocd")]
+    checks = [("Python 3.9+", sys.version_info >= (3, 9), sys.version.split()[0])]
+    if args.backend == "openocd":
+        checks.append(("OpenOCD", bool(args.openocd), args.openocd or "нет в PATH: --openocd"))
     elf = find_elf(args.elf)
     checks.append(("ELF прошивки", elf.is_file(), str(elf)))
     checks.append(("Спецификация полей", pathlib.Path(args.fields).is_file(), str(args.fields)))
     checks.append(("SVD (только для полей svd:)", True, str(args.svd or "не задан: поля svd: недоступны")))
-    free = True
-    try:
-        socket.create_connection((args.host, args.port), timeout=1).close()
-        free = args.use_running
-    except OSError:
-        free = not args.use_running
-    checks.append(("Порт telnet %d" % args.port, free,
-                   "OpenOCD уже слушает" if args.use_running else "свободен или занят: --use-running/--port"))
+    if args.backend == "renode":
+        try:
+            reader = RenodeReader(args.host, args.port, args.machine)
+            checks.append(("Монитор Renode %s:%d" % (args.host, args.port), True, "машина %s" % reader.machine))
+            reader.close()
+        except (OSError, SystemExit) as error:
+            checks.append(("Монитор Renode %s:%d" % (args.host, args.port), False,
+                           str(error) if isinstance(error, SystemExit) else "не слушает: renode --port %d" % args.port))
+    else:
+        try:
+            socket.create_connection((args.host, args.port), timeout=1).close()
+            free = args.use_running
+        except OSError:
+            free = not args.use_running
+        checks.append(("Порт telnet %d" % args.port, free,
+                       "OpenOCD уже слушает" if args.use_running else "свободен или занят: --use-running/--port"))
 
     print("доктор окружения (ядро не останавливается, плата не сбрасывается):")
     failed = 0
     for name, ok, detail in checks:
         failed += 0 if ok else 1
         print("  %-30s %-4s %s" % (name, "ок" if ok else "НЕТ", detail[:70]))
-    if args.openocd and not args.use_running:
+    if args.backend == "openocd" and args.openocd and not args.use_running:
         print("\n  пробники (%s):" % args.interface)
         for line in list_probes(args):
             print("    " + line[:100])
@@ -251,7 +347,7 @@ def record(args, fields, out):
     needed = [a for field in fields for a in aligned_needed(field["address"])]
     stats = {"cycles": 0, "written": 0, "read_failures": 0, "out_of_range": 0, "interrupted": False}
     storage = None
-    telnet = Telnet(args.host, args.port)
+    reader = open_reader(args)
     try:
         if args.record == "mcap":
             storage = writer_class(out, chunk_messages=args.chunk_size)
@@ -265,7 +361,7 @@ def record(args, fields, out):
         try:
             while time.monotonic() - started < args.seconds:
                 cycle = time.monotonic()
-                words = read_words(telnet, needed)
+                words = reader.read_words(needed)
                 moment = time.time()  # метка хоста; для точного времени добавьте счётчик платы в поля
                 stats["cycles"] += 1
                 for field in fields:
@@ -289,7 +385,7 @@ def record(args, fields, out):
     finally:
         if storage is not None:
             storage.close()
-        telnet.close()
+        reader.close()
     return stats
 
 
@@ -309,8 +405,11 @@ def main(argv=None):
     parser.add_argument("--rate", type=float, default=10.0, help="частота опроса, Гц")
     parser.add_argument("--compress", choices=["none", "bz2"], default="none", help="сжатие чанка bag")
     parser.add_argument("--chunk-size", type=int, default=1000, help="сообщений на чанк mcap")
-    parser.add_argument("--host", default="127.0.0.1", help="адрес telnet OpenOCD (для --use-running)")
-    parser.add_argument("--port", type=int, default=4444, help="порт telnet OpenOCD")
+    parser.add_argument("--backend", choices=["openocd", "renode"], default="openocd",
+                        help="откуда читать: OpenOCD (плата) или монитор Renode (эмуляция)")
+    parser.add_argument("--machine", default="", help="Renode: имя машины, если в мониторе их несколько")
+    parser.add_argument("--host", default="127.0.0.1", help="адрес telnet OpenOCD или монитора Renode")
+    parser.add_argument("--port", type=int, default=None, help="порт telnet: OpenOCD 4444, Renode 1234")
     parser.add_argument("--openocd", default=shutil.which("openocd") or "", help="путь к openocd")
     parser.add_argument("--use-running", action="store_true", help="не запускать OpenOCD, подключиться к работающему")
     parser.add_argument("--doctor", action="store_true", help="проверка окружения без записи")
@@ -319,6 +418,10 @@ def main(argv=None):
 
     if args.rate <= 0 or args.seconds <= 0:
         parser.error("--rate и --seconds должны быть положительными")
+    if args.port is None:
+        args.port = DEFAULT_PORTS[args.backend]
+    if args.backend == "renode":
+        args.use_running = True  # Renode запускается отдельно: OpenOCD не нужен
     if args.doctor:
         return doctor(args)
     if not args.openocd and not args.use_running:
@@ -342,7 +445,9 @@ def main(argv=None):
         print("  поля:     %s" % args.fields)
         print("  формат:   %s -> %s" % (args.record, out))
         print("  длина:    %.0f с, частота %.0f Гц" % (args.seconds, args.rate))
-        if args.use_running:
+        if args.backend == "renode":
+            print("  Renode:   монитор %s:%d (запуск отдельно: renode --port %d)" % (args.host, args.port, args.port))
+        elif args.use_running:
             print("  OpenOCD:  уже запущен, telnet %s:%d" % (args.host, args.port))
         else:
             print("  OpenOCD:  %s" % " ".join(openocd_command(args)))

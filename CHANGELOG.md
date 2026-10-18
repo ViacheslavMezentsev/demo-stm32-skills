@@ -10,6 +10,8 @@
 - Навык stm32-diag-record: запись полей прошивки по SWD в mcap или bag без ROS (OpenOCD без сброса цели,
   ключи `--target`, `--interface`, `--reset`, групповое чтение `mdw`, фактическая частота, сохранение файла
   при Ctrl+C), пример полей для прошивки-зонда.
+- stm32-diag-record 1.2.0: `--backend renode` читает поля из работающего Renode через его монитор (`--port`),
+  без платы и без остановки эмуляции; Emulation пишет так mcap из настоящего Renode с зондом.
 - Общие модули навыков: оригинал в stm32-ros-alt-channel, копии обновляет `ci/sync_shared.py`, задание Kits
   проверяет совпадение.
 - Emulation: stm32-diag-record пишет поля зонда через поддельный OpenOCD (`ci/fake_openocd.py`), файлы читаются

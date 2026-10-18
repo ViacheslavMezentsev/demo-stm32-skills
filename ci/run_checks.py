@@ -539,6 +539,65 @@ class Emulation(object):
             raise RuntimeError("bag topics %s, messages %d" % (sorted(bag_topics), bag_messages))
         return "8 fields (two share an address), %d cycles; mcap and bag read back by mcap and rosbags" % len(frames)
 
+    def diag_record_renode(self):
+        """stm32-diag-record --backend renode against a running probe in Renode (real monitor, no fakes)."""
+        try:
+            from mcap.reader import make_reader
+        except ImportError:
+            raise Skip("python package mcap is needed to read the file back")
+        import socket as _socket
+        import struct as _struct
+        work = OUT / "diag-renode"
+        if work.exists():
+            shutil.rmtree(work)
+        work.mkdir(parents=True)
+        # A plain build: UART log, no semihosting exit, so the core keeps running during the recording.
+        build = work / "probe"
+        run(["cmake", "-S", self.probe, "-B", build, "-G", "Ninja", "-DBOARD=F411CE", "-DCMAKE_BUILD_TYPE=Debug",
+             "-DPROBE_RENODE_TEST=OFF", "-DARM_TOOLCHAIN_ROOT=%s" % (self.tools / "gcc")],
+            log=work / "configure.log", env=self.env)
+        run(["cmake", "--build", build], log=work / "build.log", env=self.env)
+        elf = build / "stm32_skills_probe.elf"
+        with _socket.socket() as probe_port:
+            probe_port.bind(("127.0.0.1", 0))
+            port = probe_port.getsockname()[1]
+        script = work / "run.resc"
+        script.write_text("\n".join([
+            'mach create "probe"',
+            "machine LoadPlatformDescription @%s" % (self.probe / "emu" / "renode" / PROBE_MODELS["F411CE"]).as_posix(),
+            "sysbus.usart1 CreateFileBackend @%s true" % (work / "uart.log").as_posix(),
+            "sysbus LoadELF @%s" % elf.as_posix(), "start", ""]), encoding="utf-8")
+        log = (work / "renode.log").open("w", encoding="utf-8")
+        renode = subprocess.Popen([str(self.renode), "--disable-gui", "--plain", "--port", str(port),
+                                   "-e", "include @%s" % script.as_posix()], stdout=log, stderr=subprocess.STDOUT)
+        out = work / "record.mcap"
+        try:
+            deadline = time.monotonic() + 90
+            while "Machine started" not in (work / "renode.log").read_text(encoding="utf-8", errors="replace"):
+                if renode.poll() is not None or time.monotonic() > deadline:
+                    raise RuntimeError("Renode did not start the machine (see renode.log)")
+                time.sleep(0.5)
+            run([sys.executable, "-B", ROOT / "stm32-diag-record" / "scripts" / "record_diag.py", "--backend", "renode",
+                 "--port", str(port), "--elf", elf, "--svd", self.svd_f411, "--record", "mcap", "--seconds", "2",
+                 "--rate", "10", "--out", out], log=work / "record.log", env=dict(self.env, GDB=self.gdb()), timeout=120)
+        finally:
+            renode.terminate()
+            try:
+                renode.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                renode.kill()
+            log.close()
+        values = {}
+        with out.open("rb") as handle:
+            for _schema, channel, message in make_reader(handle).iter_messages():
+                values.setdefault(channel.topic, []).append(_struct.unpack("<I", message.data)[0])
+        ticks, loops, pins = values["/probe/tick_ms"], values["/probe/loop_counter"], set(values["/probe/pin_frame"])
+        if len(ticks) < 10 or ticks != sorted(ticks) or ticks[-1] <= ticks[0] or loops[-1] <= loops[0]:
+            raise RuntimeError("tick_ms %s, loop_counter %s" % (ticks[:6], loops[:6]))
+        if pins - {0, 1} or len(values) != 8:
+            raise RuntimeError("pin_frame %s, topics %d" % (sorted(pins), len(values)))
+        return "%d cycles from the Renode monitor; tick_ms %d -> %d, loop_counter grows" % (len(ticks), ticks[0], ticks[-1])
+
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__,
@@ -572,6 +631,7 @@ def main(argv=None):
             ("stm32-ros-alt-channel: read RAM in Renode F411CE", lambda: emulation.live("F411CE")),
             ("stm32-ros-alt-channel: read RAM in Renode F103C8", lambda: emulation.live("F103C8")),
             ("stm32-diag-record: record via fake OpenOCD", emulation.diag_record),
+            ("stm32-diag-record: record from Renode monitor", emulation.diag_record_renode),
         ]
         for name, function in steps:
             runner.check(name, function)
