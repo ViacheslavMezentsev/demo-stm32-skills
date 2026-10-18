@@ -368,3 +368,9 @@ OpenOCD заменён TCP-имитатором. После теста его п
 Для регрессии: `python ci/test_ros_clock_validation.py`; в WSL с ROS Noetic:
 `source /opt/ros/noetic/setup.bash && python3 ci/test_ros_live.py` — настоящий rostopic hz на частном мастере,
 TCP-имитатор OpenOCD, без платы. Общий CI: `python3 ci/run_checks.py kits emulation --strict`.
+
+При сравнении HSI/HSE сохраняйте делители и нормируйте результат на ожидаемую частоту:
+на проверенном F411CE с LOAD=15999 прямой HSE 25 МГц даёт 1562,5 tick/с, а не 1000.
+Обязательны ограниченные ожидания HSERDY/SWS, восстановление исходных настроек и отдельное
+чтение tick/fault после отключения GDB. Окончательный результат HSI→HSE→HSI и ограничения
+приведены в [методике](stm32-ros-alt-channel/references/time-validation.md#контроль-hsi--hse-25-мгц--hsi-на-f411ce).
