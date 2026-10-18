@@ -5,7 +5,7 @@
 Поток читается кусками (TCP от `rtt server` OpenOCD), границы кусков произвольны. Разбор:
 
   * синхронизация по magic; кадр фиксированной длины;
-  * контроль seq: разрыв нумерации — это потери (на цели кольцо перезаписано или потеря в транспорте);
+  * контроль seq: разрыв нумерации — это потери (цель пропустила запись в заполненное кольцо или потерян кадр в потоке);
   * значение поля: слово по выровненному адресу, затем сдвиг на byte_offset и преобразование по kind
     (та же логика, что у основного режима: convert из record_diag).
 
@@ -35,7 +35,10 @@ class FrameReader(object):
             raise ValueError("длина кадра не совпадает с числом полей")
         self.buffer = b""
         self.last_seq = None
-        self.stats = {"frames": 0, "resyncs": 0, "seq_gaps": 0, "dropped_est": 0, "bad_tail": 0}
+        self.stats = {"frames": 0, "resyncs": 0, "seq_gaps": 0, "dropped_est": 0, "bad_tail": 0,
+                      "first_seq": None, "last_seq": None, "first_tick": None, "last_tick": None,
+                      "tick_repeats": 0, "tick_wraps": 0, "tick_backwards": 0,
+                      "max_tick_step_ms": 0}
 
     def _parse_frame(self, chunk):
         magic, seq, tick = struct.unpack_from("<HHI", chunk, 0)
@@ -70,6 +73,19 @@ class FrameReader(object):
                 if gap:
                     self.stats["seq_gaps"] += 1
                     self.stats["dropped_est"] += gap
+            previous_tick = self.stats["last_tick"]
+            if previous_tick is None:
+                self.stats["first_seq"], self.stats["first_tick"] = seq, tick
+            else:
+                step = (tick - previous_tick) & 0xFFFFFFFF
+                if step == 0:
+                    self.stats["tick_repeats"] += 1
+                elif step >= 0x80000000:
+                    self.stats["tick_backwards"] += 1
+                else:
+                    self.stats["tick_wraps"] += int(tick < previous_tick)
+                    self.stats["max_tick_step_ms"] = max(self.stats["max_tick_step_ms"], step)
+            self.stats["last_seq"], self.stats["last_tick"] = seq, tick
             self.last_seq = seq
             self.stats["frames"] += 1
             frames.append((seq, tick, values))

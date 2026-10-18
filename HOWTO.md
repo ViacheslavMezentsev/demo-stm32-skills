@@ -285,3 +285,16 @@ git log --show-signature -1            # проверить подпись по�
   `git add --renormalize .`.
 - `fatal: Unable to create '…/.git/index.lock': File exists` — убедиться, что git не
   запущен (IDE, другой терминал), затем удалить `.git/index.lock`.
+
+## RTT: сохранить доказательства и разобрать начало записи
+
+rtt-timer сохраняет исходные `/_diag/rtt/seq`, `/_diag/rtt/tick_ms` внутри mcap/bag и `<имя>.rtt.json`
+рядом. Храните запись вместе с этим JSON и журналом OpenOCD. `dropped_est` относится только к разрывам
+между принятыми кадрами, а `record_closed` не подтверждает снятие перехвата. При одинаковом tick
+не удаляйте кадры: проверьте seq и остальные значения. Начальный укороченный период может быть
+следствием halt/resume и pending IRQ; механизм и порядок подтверждения —
+[в описании RTT](stm32-diag-record/references/rtt-evidence.md).
+
+Проверка без платы: `python3 ci/test_rtt_record.py`; с установленными `mcap` и `rosbags` —
+`python3 ci/test_rtt_record.py --readers`. Это синтетический транспорт с настоящими писателями файлов,
+а не аппаратная проверка таймеров и снятия перехвата.

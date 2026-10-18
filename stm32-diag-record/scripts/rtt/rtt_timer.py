@@ -35,6 +35,14 @@ import record_diag as diag  # noqa: E402
 from rtt_frames import FrameReader  # noqa: E402
 
 RTT_SERVER_PORT = 19021
+SEQ_TOPIC = "/_diag/rtt/seq"
+TICK_TOPIC = "/_diag/rtt/tick_ms"
+
+
+def validate_topics(layout):
+    topics = [field["topic"] for field in layout["fields"]]
+    if len(set(topics)) != len(topics) or set(topics) & {SEQ_TOPIC, TICK_TOPIC}:
+        raise ValueError("топики полей должны быть уникальными и не занимать /_diag/rtt/seq, /_diag/rtt/tick_ms")
 
 
 def mdw(telnet, address):
@@ -129,48 +137,93 @@ def teardown(telnet, layout, saved):
 
 
 def read_stream(telnet, layout, args, out):
-    """Запустить RTT-сервер, прочитать поток, записать файл. Возвращает статистику."""
-    cb, size = layout["rtt"]["control_block"], layout["rtt"]["size"]
-    telnet.command('rtt setup 0x%08X 0x%X "%s"' % (cb, size, layout["rtt"]["id"]))
-    start = telnet.command("rtt start") or ""
-    if "found" not in start.lower() and "Control block" not in start:
-        raise SystemExit("OpenOCD не нашёл управляющий блок RTT:\n%s" % start.strip()[-300:])
-    telnet.command("rtt polling_interval %d" % max(getattr(args, "rtt_poll_ms", 10), 1))  # чаще опрос — выше слив
-    telnet.command("rtt server start %d 0" % RTT_SERVER_PORT)
+    """Записать поля, исходные seq/tick и итоговый JSON, включая частичный сеанс."""
+    validate_topics(layout)
+    out = pathlib.Path(out)
     reader = FrameReader(layout)
-    writer_class = diag.McapWriter if args.record == "mcap" else diag.BagWriter
-    if args.record == "mcap":
-        storage = writer_class(out, chunk_messages=args.chunk_size)
-    else:
-        storage = writer_class(out, compression=None if args.compress == "none" else args.compress)
-    for field in layout["fields"]:
-        storage.add_connection(field["topic"], field["message"])
-    written = out_of_range = 0
-    sock = socket.create_connection((args.host, RTT_SERVER_PORT), timeout=5)
-    sock.settimeout(1.0)
-    deadline = time.monotonic() + args.seconds
+    stats = reader.stats
+    stats.update(written=0, metadata_written=0, out_of_range=0)
+    report = {
+        "schema": 1, "backend": "rtt-timer", "record": out.name, "board": layout.get("board"),
+        "seq_topic": SEQ_TOPIC, "tick_topic": TICK_TOPIC,
+        "seq_bits": 16, "tick_bits": 32, "tick_unit": "ms",
+        "loss_scope": "between_received_frames_modulo_65536",
+        "target_dropped": None,
+        "requested_seconds": args.seconds,
+        "timer": layout["timer"], "frame": layout["frame"],
+        "buffer_bytes": layout["rtt"]["size"],
+        "rtt_poll_ms": max(getattr(args, "rtt_poll_ms", 10), 1),
+        "stop_reason": "error", "record_closed": False, "stats": stats,
+    }
+    storage = sock = None
+    started = time.monotonic()
     try:
+        cb, size = layout["rtt"]["control_block"], layout["rtt"]["size"]
+        telnet.command('rtt setup 0x%08X 0x%X "%s"' % (cb, size, layout["rtt"]["id"]))
+        start = telnet.command("rtt start") or ""
+        if "found" not in start.lower() and "Control block" not in start:
+            raise RuntimeError("OpenOCD не нашёл управляющий блок RTT: %s" % start.strip()[-300:])
+        telnet.command("rtt polling_interval %d" % report["rtt_poll_ms"])
+        telnet.command("rtt server start %d 0" % RTT_SERVER_PORT)
+        if args.record == "mcap":
+            storage = diag.McapWriter(out, chunk_messages=args.chunk_size)
+        else:
+            storage = diag.BagWriter(out, compression=None if args.compress == "none" else args.compress)
+        for field in layout["fields"]:
+            storage.add_connection(field["topic"], field["message"])
+        for topic in (SEQ_TOPIC, TICK_TOPIC):
+            storage.add_connection(topic, "std_msgs/UInt32")
+        sock = socket.create_connection((args.host, RTT_SERVER_PORT), timeout=5)
+        sock.settimeout(1.0)
+        deadline = time.monotonic() + args.seconds
+        report["stop_reason"] = "duration"
         while time.monotonic() < deadline:
             try:
                 chunk = sock.recv(65536)
             except socket.timeout:
                 continue
             if not chunk:
+                report["stop_reason"] = "eof"
                 break
             for seq, tick, values in reader.feed(chunk):
-                sec, nsec = tick // 1000, (tick % 1000) * 1_000_000   # метка по tick прошивки (мс)
+                sec, nsec = tick // 1000, (tick % 1000) * 1_000_000
+                # seq is payload, not the writer's independent per-channel sequence.
+                storage.write(SEQ_TOPIC, seq, sec, nsec)
+                storage.write(TICK_TOPIC, tick, sec, nsec)
+                stats["metadata_written"] += 2
                 for topic, message, value, in_range in values:
                     if not in_range:
-                        out_of_range += 1
+                        stats["out_of_range"] += 1
                         continue
                     storage.write(topic, value, sec, nsec)
-                    written += 1
+                    stats["written"] += 1
     except KeyboardInterrupt:
+        report["stop_reason"] = "interrupt"
         print("  остановлено досрочно (Ctrl+C)")
+    except Exception as error:
+        report["stop_reason"] = "error"
+        report["error_type"] = type(error).__name__
+        raise
     finally:
-        sock.close()
-        storage.close()
-    stats = dict(reader.stats, written=written, out_of_range=out_of_range)
+        stats["bad_tail"] = len(reader.buffer)
+        report["elapsed_host_seconds"] = time.monotonic() - started
+        try:
+            if sock is not None:
+                sock.close()
+        finally:
+            try:
+                if storage is not None:
+                    storage.close()
+                    report["record_closed"] = True
+            except Exception as error:
+                report["stop_reason"] = "error"
+                report["close_error_type"] = type(error).__name__
+                raise
+            finally:
+                report_path = out.with_suffix(".rtt.json")
+                temporary = report_path.with_suffix(".json.tmp")
+                temporary.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                temporary.replace(report_path)
     return stats
 
 
@@ -346,6 +399,8 @@ def run(args):
     tick_address = resolve_tick(args, elf, workdir)
     image_path, layout = build_image(args, elf, addresses, tick_address, workdir)
 
+    validate_topics(layout)  # до запуска OpenOCD и установки перехвата
+
     if args.dryrun:
         print("=== DRYRUN rtt-timer: образ собран, цель не трогается ===")
         print("  образ:   %s (%d байт, SRAM 0x%08X..0x%08X)" % (image_path, layout["image_size"],
@@ -375,10 +430,12 @@ def run(args):
         telnet.close()
         diag.stop_openocd(process)
 
+    print("статистика RTT: %s" % out.with_suffix(".rtt.json"))
     print("готово: %s (%d байт)" % (out, out.stat().st_size))
     print("  кадров %d, записано %d, потери (оценка) %d, разрывов seq %d, вне диапазона %d, ресинхр. %d"
           % (stats["frames"], stats["written"], stats["dropped_est"], stats["seq_gaps"],
              stats["out_of_range"], stats["resyncs"]))
+    print("  служебных сообщений seq/tick: %d" % stats["metadata_written"])
     if stats["dropped_est"]:
         print("  потери кадров: цель пишет быстрее, чем хост читает кольцо — увеличьте --buffer или снизьте --rate")
     return 0 if stats["written"] else 1

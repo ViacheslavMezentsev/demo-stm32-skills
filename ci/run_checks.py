@@ -364,6 +364,14 @@ def check_site():
     return "%d pages, local links and assets resolve" % len(pages)
 
 
+def check_rtt_record(readers=False):
+    args = [sys.executable, "-B", ROOT / "ci/test_rtt_record.py"]
+    if readers:
+        args.append("--readers")
+    run(args, log=OUT / ("rtt-record-readers.log" if readers else "rtt-record.log"))
+    return "raw seq/tick, wrap, gaps, filtered fields, EOF, Ctrl+C and transport failure"
+
+
 def check_rtt_frames():
     """Парсер кадров rtt-timer: ресинхронизация, склейка кусков, разрывы seq, kind/shift/mask."""
     sys.path.insert(0, str(ROOT / "stm32-diag-record" / "scripts" / "rtt"))
@@ -414,6 +422,7 @@ KITS = [
     ("stm32-diag-record: doctor parses OpenOCD output", check_diag_doctor),
     ("stm32-diag-record: telnet survives async OpenOCD messages", check_diag_telnet_async),
     ("stm32-diag-record: rtt-timer frame parser", check_rtt_frames),
+    ("stm32-diag-record: RTT recording evidence", check_rtt_record),
 ]
 
 
@@ -977,6 +986,7 @@ def main(argv=None):
             ("stm32-ros-alt-channel: resolve offline", emulation.resolve_offline),
             ("stm32-ros-alt-channel: read RAM in Renode F411CE", lambda: emulation.live("F411CE")),
             ("stm32-ros-alt-channel: read RAM in Renode F103C8", lambda: emulation.live("F103C8")),
+            ("stm32-diag-record: RTT evidence independent readers", lambda: check_rtt_record(readers=True)),
             ("stm32-diag-record: record via fake OpenOCD", emulation.diag_record),
             ("stm32-diag-record: record from Renode monitor", emulation.diag_record_renode),
             ("stm32-diag-record: rtt-timer stub in Renode", emulation.diag_record_rtt_timer),
