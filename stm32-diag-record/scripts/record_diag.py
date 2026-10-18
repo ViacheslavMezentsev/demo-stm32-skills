@@ -494,6 +494,7 @@ def main(argv=None):
     parser.add_argument("--machine", default="", help="Renode: имя машины, если в мониторе их несколько")
     # Ключи режима --backend rtt-timer (прототип, Cortex-M3/M4 стендов stm32-gdbtest).
     parser.add_argument("--board", default="", help="rtt-timer: стенд (f411ce, f103c8, f401cc, f429zi, at32f403a)")
+    parser.add_argument("--timer", default="", help="rtt-timer: свободный таймер TIM2 (по умолч.), TIM3, TIM4, TIM5")
     parser.add_argument("--sram-base", default="", help="rtt-timer: свободное окно SRAM (hex), напр. 0x2001E000")
     parser.add_argument("--toolchain", default="", help="rtt-timer: каталог bin тулчейна arm-none-eabi (сборка заглушки)")
     parser.add_argument("--buffer", type=int, default=4096, help="rtt-timer: размер кольцевого буфера, байт")
@@ -509,7 +510,18 @@ def main(argv=None):
     parser.add_argument("--use-running", action="store_true", help="не запускать OpenOCD, подключиться к работающему")
     parser.add_argument("--doctor", action="store_true", help="проверка окружения без записи")
     parser.add_argument("--dryrun", action="store_true", help="показать план без записи")
+    parser.add_argument("--list-signals", action="store_true",
+                        help="офлайн: выписать глобальные переменные прошивки из ELF в CSV для спецификации полей (плата не нужна)")
+    parser.add_argument("--signals-path", default="src/",
+                        help="--list-signals: фильтр по пути исходника (подстрока), по умолчанию src/")
     args = parser.parse_args(argv)
+
+    if args.list_signals:
+        sys.path.insert(0, str(HERE))
+        import list_signals
+        elf = find_elf(args.elf)
+        return list_signals.main(["--elf", str(elf), "--path", args.signals_path]
+                                 + (["--out", args.out] if args.out else []))
 
     if args.rate <= 0 or args.seconds <= 0:
         parser.error("--rate и --seconds должны быть положительными")

@@ -811,6 +811,34 @@ class Emulation(object):
         return ("real stub in Renode: %d frames, seq 1..%d, tick %d->%d, 0 drops; f030r8 and RAM-overflow refused; "
                 "doctor elf_facts (SP 0x%08X, SystemCoreClock)" % (pends, pends, ticks[0], ticks[-1], sp_top))
 
+    def list_signals(self):
+        """--list-signals: офлайн-перечисление глобальных переменных зонда из ELF (GDB+DWARF) в CSV.
+        Проверяем раскрытие структуры на поля, карту kind (float32/int32/uint32), фильтр по пути и
+        отсев функций/невыразимых типов."""
+        import csv as _csv
+        elf = self.elves["F411CE"]
+        work = OUT / "list-signals"
+        if work.exists():
+            shutil.rmtree(work)
+        work.mkdir(parents=True)
+        out = work / "signals.csv"
+        run([sys.executable, "-B", ROOT / "stm32-diag-record" / "scripts" / "record_diag.py",
+             "--list-signals", "--elf", elf, "--signals-path", "probe.cpp", "--out", str(out)],
+            log=work / "list.log", env=dict(self.env, GDB=self.gdb()), timeout=120)
+        rows = {r["expr"]: r for r in _csv.DictReader(out.open(encoding="utf-8"))}
+        expect = {"&probe_counter": "uint32", "&probe_telemetry.frames": "uint32",
+                  "&probe_telemetry.ramp": "float32", "&probe_telemetry.sine_milli": "int32"}
+        for expr, kind in expect.items():
+            if expr not in rows:
+                raise RuntimeError("нет %s в CSV (%s)" % (expr, sorted(rows)))
+            if rows[expr]["kind"] != kind:
+                raise RuntimeError("%s: kind %s, ожидалось %s" % (expr, rows[expr]["kind"], kind))
+        if any("probe.cpp" not in r["file"] for r in rows.values()):
+            raise RuntimeError("фильтр по пути пропустил чужой файл: %s" % sorted(rows))
+        if any("(" in expr for expr in rows):           # функции и указатели на функции не должны попадать
+            raise RuntimeError("в списке оказалась функция: %s" % sorted(rows))
+        return "%d переменных из probe.cpp; структура раскрыта в поля, kind float32/int32/uint32, фильтр пути" % len(rows)
+
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__,
@@ -846,6 +874,7 @@ def main(argv=None):
             ("stm32-diag-record: record via fake OpenOCD", emulation.diag_record),
             ("stm32-diag-record: record from Renode monitor", emulation.diag_record_renode),
             ("stm32-diag-record: rtt-timer stub in Renode", emulation.diag_record_rtt_timer),
+            ("stm32-diag-record: --list-signals from ELF", emulation.list_signals),
         ]
         for name, function in steps:
             runner.check(name, function)

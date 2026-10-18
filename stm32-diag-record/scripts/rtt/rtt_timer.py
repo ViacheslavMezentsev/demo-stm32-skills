@@ -78,6 +78,8 @@ def build_image(args, elf, addresses, tick_address, workdir):
                "--addresses", str(addresses), "--board", args.board, "--boards", str(HERE / "boards.toml"),
                "--toolchain", args.toolchain, "--sram-base", args.sram_base, "--buffer", str(args.buffer),
                "--tick-address", "0x%08X" % tick_address, "--rate", str(args.rate), "--out", str(out)]
+    if getattr(args, "timer", ""):
+        command += ["--timer", args.timer]
     if args.timer_clock_hz:
         command += ["--timer-clock-hz", str(args.timer_clock_hz)]
     result = subprocess.run(command, capture_output=True, text=True)
@@ -189,6 +191,9 @@ def load_board(args):
                          % (board, ", ".join(k for k in boards if k != "defaults")))
     cfg = dict(boards["defaults"])
     cfg.update(boards[board])
+    if "unsupported" not in cfg:
+        import build_rtt_image
+        cfg = build_rtt_image.select_timer(cfg, boards, getattr(args, "timer", ""))
     return board, cfg
 
 

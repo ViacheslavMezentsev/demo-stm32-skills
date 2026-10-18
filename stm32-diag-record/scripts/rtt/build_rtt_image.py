@@ -35,6 +35,20 @@ HEADER_LEN = 8                     # кадр: u16 magic, u16 seq, u32 tick
 VECTOR_NAMES = (".isr_vector", ".vectors", ".vector_table", ".intvec", ".vectors_flash")
 
 
+def select_timer(cfg, boards, name):
+    """Вписать в cfg выбранный таймер (база, IRQ, бит тактирования) из таблицы [timers]."""
+    timers = boards.get("timers", {})
+    name = (name or cfg.get("default_timer", "TIM2")).upper()
+    if name not in timers:
+        raise SystemExit("нет таймера %r в boards.toml (есть: %s)" % (name, ", ".join(sorted(timers))))
+    timer = timers[name]
+    cfg["timer"] = name
+    cfg["timer_base"] = timer["base"]
+    cfg["timer_irq"] = timer["irq"]
+    cfg["rcc_enable_bit"] = timer["rcc_bit"]
+    return cfg
+
+
 def next_pow2(value):
     power = 1
     while power < value:
@@ -101,6 +115,7 @@ def main(argv=None):
     parser.add_argument("--elf", required=True, help="ELF прошивки (для таблицы векторов)")
     parser.add_argument("--addresses", required=True, help="addresses.json от resolve_addresses.py")
     parser.add_argument("--board", required=True, help="стенд из boards.toml (f411ce, f103c8, ...)")
+    parser.add_argument("--timer", default="", help="свободный таймер: TIM2 (по умолчанию), TIM3, TIM4, TIM5")
     parser.add_argument("--boards", default=str(HERE / "boards.toml"), help="файл параметров стендов")
     parser.add_argument("--toolchain", required=True, help="каталог bin тулчейна arm-none-eabi")
     parser.add_argument("--sram-base", required=True, help="начало свободного окна SRAM (hex), напр. 0x2001E000")
@@ -120,6 +135,7 @@ def main(argv=None):
     cfg.update(boards[board])
     if "unsupported" in cfg:
         raise SystemExit("стенд %s не поддержан: %s" % (board, cfg["unsupported"]))
+    cfg = select_timer(cfg, boards, args.timer)
 
     data = json.loads(pathlib.Path(args.addresses).read_text(encoding="utf-8"))
     fields = [f for f in data["fields"] if f.get("role") != "tick"]
