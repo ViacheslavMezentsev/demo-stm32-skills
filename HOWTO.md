@@ -15,20 +15,27 @@ Workflow Skills состоит из трёх заданий: Validate (`skills-r
 
 ```sh
 python3 ci/run_checks.py kits                 # скрипты, assets, самопроверки навыков (без сети)
-python3 ci/run_checks.py emulation            # GCC и Renode 1.17 из ci/tools.lock.json, QEMU
+python3 ci/run_checks.py emulation            # зонд, GCC, Renode 1.17 и SVD из ci/tools.lock.json, QEMU
+python3 ci/run_checks.py emulation --probe ../stm32-skills-probe   # с локальной копией зонда
 python3 ci/run_checks.py kits emulation --strict   # как в CI: SKIP считается ошибкой
 ```
 
 Необязательные инструменты дают SKIP: `sigrok-cli`, `clang-format` ≥ 16, `openocd`, `qemu-system-arm`, GDB с
 Python (`gdb-multiarch` или `arm-none-eabi-gdb-py3`). Ubuntu: `sudo apt install sigrok-cli clang-format
 openocd qemu-system-arm ninja-build gdb-multiarch`. Загрузки (`ci/fetch_tools.py`, около 170 МБ) кэшируются в
-`build/ci-tools` и проверяются по SHA-256; итог — `build/ci/summary.json`, журналы — `build/ci/*.log`.
+`build/ci-tools` и проверяются по SHA-256; зонд берётся из git по закреплённому коммиту (`probe` в
+`ci/tools.lock.json`, проверка — сам хеш коммита). Итог — `build/ci/summary.json`, журналы — `build/ci/*.log`.
+
+Обновить зонд в CI: изменения зонда сначала попадают в его `main` (или хотя бы отправленную ветку: при
+слиянии перемоткой хеш не меняется), затем в `ci/tools.lock.json` меняется `commit` и `version`. До публикации
+изменения зонда проверяются ключом `--probe <локальная копия>`.
 
 | Проблема | Решение |
 | --- | --- |
 | `SHA-256 mismatch` при загрузке | Файл повреждён или подменён: он уже удалён, повторить запуск; если повторяется — сверить `url` и `sha256` в `ci/tools.lock.json` |
 | Renode: `GDB server ... started`, но порт недоступен | В окружении нет IPv6 на loopback (часть песочниц и контейнеров); CI читает память монитором Renode, GDB-сервер для проверок не нужен |
-| Прогон QEMU заканчивается таймаутом | Прошивка не вызывает семихостинг `SYS_EXIT`: QEMU сам не останавливается |
+| Прогон QEMU заканчивается таймаутом | Прошивка не вызывает семихостинг `SYS_EXIT`: QEMU сам не останавливается (у зонда — сборка с `-DPROBE_EXIT_MS`) |
+| `upload-pack: not our ref <хеш>` при загрузке зонда | Закреплённый коммит ещё не отправлен на GitHub: отправить ветку зонда или проверять с `--probe` |
 
 Эмуляция — не аппаратная проверка: PASS в Renode или QEMU подтверждает только работу в эмуляторе.
 

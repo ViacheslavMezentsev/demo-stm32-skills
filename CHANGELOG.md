@@ -12,9 +12,10 @@
   F103C8); план исследований обновлён под эти платы.
 - Kits проверяет наличие RTT-команд в OpenOCD, используемых stm32-rtt-console.
 - Задания CI Kits и Emulation (`ci/run_checks.py`, закреплённые загрузки `ci/tools.lock.json`):
-  самопроверки комплектов навыков; прошивка `tests/firmware/boot-g474`, собранная тулчейн-файлом
-  stm32-vscode-cmake-scaffold, запускается в Renode 1.17 и QEMU через stm32-renode-emulator с проверкой
-  стартового лога; макет сверяется с SVD, stm32-ros-alt-channel разрешает адреса и читает память.
+  самопроверки комплектов навыков; прошивка-зонд stm32-skills-probe (закреплённый коммит) собирается для
+  F411CE, F401CC и F103C8 (F411CE — тулчейн-файлом stm32-vscode-cmake-scaffold), запускается в Renode 1.17 и
+  QEMU через stm32-renode-emulator с проверкой стартового лога; модели сверяются с SVD, stm32-ros-alt-channel
+  разрешает адреса (в том числе поле структуры по DWARF) и читает память работающего ядра.
 - stm32-renode-emulator: макет `stm32g4_mock.repl`, сценарии `boot.resc` и `debug.resc`, проверка лога
   `check_startup_log.py` и образец ожиданий — комплект теперь самодостаточен.
 
@@ -46,6 +47,8 @@
 - Сведения о конкретном стенде из поля `compatibility` в stm32-swo-trace и stm32-rtt-console.
 
 ### Исправлено
+
+- stm32-ros-alt-channel: `resolve_addresses.py` падал без `--svd`, даже если полей `svd:` в спецификации нет.
 
 - stm32-renode-emulator: `run.py` искал макет и проверку лога в каталогах исходного проекта; обрезанный
   SKILL.md переписан (маршруты, прогон, проверка лога, версии Renode).

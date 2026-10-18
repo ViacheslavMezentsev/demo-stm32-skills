@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "comment": "Pinned downloads for ci/run_checks.py (linux-x64). Change deliberately: update url and sha256 together.",
+  "comment": "Pinned downloads for ci/run_checks.py (linux-x64). Change deliberately: update url with sha256 (archives, files) or commit (git) together.",
   "tools": {
     "gcc": {
       "version": "14.2.1-1.1",
@@ -22,6 +22,19 @@
       "sha256": "b9d75d8f197df0ecd11d60885862da166f31878cf18d1b5c5e126ab675130281",
       "kind": "file",
       "name": "STM32G474.svd"
+    },
+    "svd-stm32f411": {
+      "version": "modm-io/cmsis-svd-stm32@e79021accd49bf19bd0b16065f5471fb073ff3ac",
+      "url": "https://raw.githubusercontent.com/modm-io/cmsis-svd-stm32/e79021accd49bf19bd0b16065f5471fb073ff3ac/stm32f4/STM32F411.svd",
+      "sha256": "c5783de354c34e3f050b1eaf3a126c4bb986fcee93ca7cb88d10e1949818a35f",
+      "kind": "file",
+      "name": "STM32F411.svd"
+    },
+    "probe": {
+      "version": "stm32-skills-probe 0.2.0",
+      "url": "https://github.com/ViacheslavMezentsev/stm32-skills-probe.git",
+      "commit": "a0b44fab021a19ae7fa0d080fa304d572e2c3cb4",
+      "kind": "git"
     }
   }
 }

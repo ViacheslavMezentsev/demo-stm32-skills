@@ -104,6 +104,8 @@ def resolve(elf, spec_path, svd_path, target=None):
 
     resolved = {}
     if svd_fields:
+        if not svd_path:
+            raise ValueError("поля svd: требуют SVD-файла: --svd или STM32_SVD")
         lookup = SvdLookup(svd_path)
         for item in svd_fields:
             address, size_bits, shift, mask = lookup.resolve(item["expr"][4:])
@@ -145,7 +147,7 @@ def resolve(elf, spec_path, svd_path, target=None):
     ordered = [resolved[item["expr"]] for item in fields]
     data = {"schema": 1, "elf": str(elf),
             "elf_sha256": hashlib.sha256(pathlib.Path(elf).read_bytes()).hexdigest(),
-            "svd": str(svd_path), "fields": ordered}
+            "svd": str(svd_path) if svd_path else None, "fields": ordered}
     return data
 
 
@@ -175,7 +177,7 @@ def main():
     out.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     print("ELF:   %s" % elf)
-    print("SVD:   %s" % pathlib.Path(args.svd).name)
+    print("SVD:   %s" % (pathlib.Path(args.svd).name if args.svd else "не задан (полей svd: нет)"))
     print("режим: %s" % (("живая цель " + args.target) if args.target
                          else "офлайн по ELF (плата не нужна)"))
     print("\nадреса полей:")

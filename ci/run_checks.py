@@ -10,13 +10,14 @@ kits       Python scripts compile, shell scripts parse, JSON/JSONC and TOML asse
            checks its own template and example, renode_compat converts the mock platform
            both ways, weact-logic-analyzer self-test runs on synthetic signals (sigrok-cli),
            OpenOCD offers the RTT commands that stm32-rtt-console uses.
-emulation  The CI firmware (tests/firmware/boot-g474) is built with the toolchain file of
-           stm32-vscode-cmake-scaffold, run in Renode 1.17 by stm32-renode-emulator and its
-           boot log verified; the same ELF runs in QEMU (profile F411) when qemu-system-arm
-           is available. The mock platform is checked against the STM32G474 SVD through
-           svd_lookup of stm32-ros-alt-channel, whose resolve_addresses.py then resolves the
-           firmware fields from the ELF; the resolved RAM addresses are read twice from the
-           running core in Renode and must show a changing counter.
+emulation  The probe firmware (stm32-skills-probe, pinned commit) is built for F411CE, F401CC
+           and F103C8 with semihosting and a timed exit; F411CE uses the toolchain file of
+           stm32-vscode-cmake-scaffold. stm32-renode-emulator runs every build in Renode 1.17
+           on the probe model and the F4 builds in QEMU, and verifies the boot log against the
+           probe's expected files. The renode-emulator mock and the probe model are checked
+           against the device SVDs through svd_lookup of stm32-ros-alt-channel, whose
+           resolve_addresses.py resolves probe symbols and a struct field from the ELF; the
+           resolved RAM addresses are read twice from the running core in Renode.
 
 A missing optional tool (sigrok-cli, clang-format, openocd, qemu-system-arm, GDB with Python) gives
 SKIP; with --strict it is a failure. Results: build/ci/summary.json, logs: build/ci/*.log.
@@ -36,7 +37,13 @@ import time
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 OUT = ROOT / "build" / "ci"
-FIRMWARE = ROOT / "tests" / "firmware" / "boot-g474"
+BOARDS = ("F411CE", "F401CC", "F103C8")
+PROBE_MODELS = {"F411CE": "stm32f4_probe.repl", "F401CC": "stm32f4_probe.repl", "F103C8": "stm32f103_probe.repl"}
+PROBE_EXIT_MS = 500  # the probe ends the run itself: QEMU terminates, Renode halts the core
+SEMIHOSTING_UART = "semihosting: CPU.SemihostingHandler @ cpu\nuart: UART.SemihostingUart @ semihosting\n"
+# Probe model peripherals (F4) and their names in the STM32F411 SVD.
+PROBE_MODEL_TO_SVD = {"usart1": "USART1", "tim1": "TIM1", "gpioa": "GPIOA", "gpiob": "GPIOB", "gpioc": "GPIOC",
+                      "rcc": "RCC", "flash_ctrl": "FLASH"}
 RENODE_SKILL = ROOT / "stm32-renode-emulator"
 ROS_SKILL = ROOT / "stm32-ros-alt-channel"
 
@@ -243,87 +250,113 @@ KITS = [
 # --------------------------------------------------------------------- emulation
 
 class Emulation(object):
-    def __init__(self, tools):
+    def __init__(self, tools, probe=None):
         self.tools = tools
         self.gcc = tools / "gcc" / "bin"
         self.renode = tools / "renode" / "renode"
-        self.svd = tools / "svd-stm32g474" / "STM32G474.svd"
-        self.build = OUT / "boot-g474"
-        self.elf = self.build / "firmware.elf"
+        self.svd_g474 = tools / "svd-stm32g474" / "STM32G474.svd"
+        self.svd_f411 = tools / "svd-stm32f411" / "STM32F411.svd"
+        self.probe = pathlib.Path(probe).resolve() if probe else tools / "probe"
+        self.local_probe = probe is not None
+        self.elves = {}
         self.env = dict(os.environ, PATH=str(self.gcc) + os.pathsep + os.environ.get("PATH", ""),
-                        STM32_SVD=str(self.svd), STM32_TOOLCHAIN_PATH=str(tools / "gcc"))
+                        STM32_TOOLCHAIN_PATH=str(tools / "gcc"))
 
     def fetch(self):
-        text = run([sys.executable, "-B", ROOT / "ci" / "fetch_tools.py", "--dest", self.tools],
+        names = ["gcc", "renode", "svd-stm32g474", "svd-stm32f411"] + ([] if self.local_probe else ["probe"])
+        text = run([sys.executable, "-B", ROOT / "ci" / "fetch_tools.py", "--dest", self.tools] + names,
                    log=OUT / "fetch_tools.log", timeout=900)
-        return "; ".join(line.split(None, 1)[0] for line in text.splitlines() if line.strip())
+        fetched = "; ".join(line.split(None, 1)[0] for line in text.splitlines() if line.strip())
+        return fetched + ("; probe from %s" % self.probe if self.local_probe else "")
 
-    def firmware(self):
-        if self.build.exists():
-            shutil.rmtree(self.build)
-        toolchain = ROOT / "stm32-vscode-cmake-scaffold" / "assets" / "gcc-arm-none-eabi.cmake"
-        generator = ["-G", "Ninja"] if shutil.which("ninja") else []
-        run(["cmake", "-S", FIRMWARE, "-B", self.build] + generator +
-            ["-DCMAKE_TOOLCHAIN_FILE=%s" % toolchain, "-DSTM32_TOOLCHAIN_PATH=%s" % (self.tools / "gcc")],
-            log=OUT / "firmware-configure.log", env=self.env)
-        text = run(["cmake", "--build", self.build], log=OUT / "firmware-build.log", env=self.env)
+    def build(self, board):
+        """Probe build with semihosting and a timed exit (what run.py of the skill needs)."""
+        out = OUT / ("probe-%s" % board.lower())
+        if out.exists():
+            shutil.rmtree(out)
+        args = ["cmake", "-S", self.probe, "-B", out, "-G", "Ninja", "-DBOARD=%s" % board,
+                "-DCMAKE_BUILD_TYPE=Debug", "-DPROBE_LOG_SEMIHOSTING=ON", "-DPROBE_EXIT_MS=%d" % PROBE_EXIT_MS,
+                "-DPROBE_RENODE_TEST=OFF"]
+        if board == "F411CE":
+            # Cross-check: the probe builds with the toolchain file of stm32-vscode-cmake-scaffold.
+            toolchain = ROOT / "stm32-vscode-cmake-scaffold" / "assets" / "gcc-arm-none-eabi.cmake"
+            args += ["-DCMAKE_TOOLCHAIN_FILE=%s" % toolchain, "-DSTM32_TOOLCHAIN_PATH=%s" % (self.tools / "gcc")]
+        else:
+            args += ["-DARM_TOOLCHAIN_ROOT=%s" % (self.tools / "gcc")]
+        run(args, log=OUT / ("probe-%s-configure.log" % board.lower()), env=self.env)
+        text = run(["cmake", "--build", out], log=OUT / ("probe-%s-build.log" % board.lower()), env=self.env)
+        self.elves[board] = out / "stm32_skills_probe.elf"
         size = re.search(r"^\s*(\d+)\s+(\d+)\s+(\d+)\s+\d+", text, re.M)
-        return "text %s, data %s, bss %s bytes" % size.groups() if size else "built"
+        toolchain = "scaffold toolchain file" if board == "F411CE" else "probe toolchain"
+        return "%s; text %s, data %s, bss %s bytes" % ((toolchain,) + size.groups()) if size else toolchain
 
-    def emulator_run(self, profile, expected, binary_args):
-        output = OUT / ("run-%s" % profile.lower())
+    def platform(self, board):
+        """Probe model with a semihosting UART added, for the Renode route of run.py."""
+        path = OUT / ("probe-%s-semihosting.repl" % board.lower())
+        model = (self.probe / "emu" / "renode" / PROBE_MODELS[board]).read_text(encoding="utf-8")
+        path.write_text(model.rstrip("\n") + "\n" + SEMIHOSTING_UART, encoding="utf-8")
+        return path
+
+    def expected(self, board, emulator):
+        source = self.probe / "emu" / "expected" / ("%s.toml" % board.lower())
+        if emulator == "renode":
+            return source
+        path = OUT / ("expected-%s-%s.toml" % (board.lower(), emulator))
+        text = source.read_text(encoding="utf-8").replace('emulator = "renode"', 'emulator = "%s"' % emulator)
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def emulator_run(self, board, profile, binary_args, emulator):
+        output = OUT / ("run-%s-%s" % (board.lower(), emulator))
         if output.exists():
             shutil.rmtree(output)
         run([sys.executable, "-B", RENODE_SKILL / "scripts" / "run.py", "--profile", profile,
-             "--elf", self.elf, "--output", output, "--verify", "--expected", expected,
+             "--elf", self.elves[board], "--output", output, "--verify", "--expected", self.expected(board, emulator),
              "--objcopy", self.gcc / "arm-none-eabi-objcopy"] + binary_args,
-            log=OUT / ("run-%s.log" % profile.lower()), env=self.env, timeout=240)
+            log=OUT / ("run-%s-%s.log" % (board.lower(), emulator)), env=self.env, timeout=240)
         result = json.loads((output / "run.json").read_text(encoding="utf-8"))
         if result.get("status") != "PASS":
             raise RuntimeError("run.json status %s" % result.get("status"))
+        log = (output / "startup.log").read_text(encoding="utf-8", errors="replace")
+        if "exit: %d ms" % PROBE_EXIT_MS not in log:
+            raise RuntimeError("the probe did not reach its timed exit")
         return result
 
-    def renode_boot(self):
-        result = self.emulator_run("G474", FIRMWARE / "expected.toml", ["--renode", self.renode])
-        return "boot log PASS in Renode %s" % result.get("renode_version")
+    def renode_boot(self, board):
+        result = self.emulator_run(board, "G474", ["--renode", self.renode, "--platform", self.platform(board)], "renode")
+        return "boot log PASS in Renode %s (probe model)" % result.get("renode_version")
 
     def negative_log(self):
         """The checker must reject a truncated log (otherwise PASS above proves nothing)."""
-        log = OUT / "run-g474" / "startup.log"
+        log = OUT / "run-f411ce-renode" / "startup.log"
         lines = log.read_text(encoding="utf-8").splitlines()
         broken = OUT / "negative" / "startup.log"
         broken.parent.mkdir(parents=True, exist_ok=True)
-        broken.write_text("\n".join(lines[:2]) + "\n", encoding="utf-8")
+        broken.write_text("\n".join(lines[:3]) + "\n", encoding="utf-8")
         result = subprocess.run(
-            [sys.executable, "-B", str(RENODE_SKILL / "scripts" / "check_startup_log.py"),
-             "--log", str(broken), "--elf", str(self.elf), "--expected", str(FIRMWARE / "expected.toml"),
+            [sys.executable, "-B", str(RENODE_SKILL / "scripts" / "check_startup_log.py"), "--log", str(broken),
+             "--elf", str(self.elves["F411CE"]), "--expected", str(self.expected("F411CE", "renode")),
              "--objcopy", str(self.gcc / "arm-none-eabi-objcopy")], capture_output=True, text=True)
         if result.returncode != 1:
             raise RuntimeError("truncated log accepted (exit %d)" % result.returncode)
         return "truncated log rejected"
 
-    def qemu_boot(self):
+    def qemu_boot(self, board):
         qemu = shutil.which("qemu-system-arm")
         if not qemu:
             raise Skip("qemu-system-arm not found")
-        expected = OUT / "expected-qemu.toml"
-        text = (FIRMWARE / "expected.toml").read_text(encoding="utf-8")
-        expected.write_text(text.replace('emulator = "renode"', 'emulator = "qemu"')
-                            .replace('machine = "stm32g4_mock"', 'machine = "netduinoplus2"'),
-                            encoding="utf-8")
-        self.emulator_run("F411", expected, ["--qemu", qemu])
-        return "same ELF, boot log PASS in QEMU netduinoplus2"
+        self.emulator_run(board, "F411", ["--qemu", qemu], "qemu")
+        return "boot log PASS in QEMU netduinoplus2, timed exit"
 
-    def mock_vs_svd(self):
+    def model_vs_svd(self, model_text, svd_path, mapping):
         sys.path.insert(0, str(ROS_SKILL / "scripts"))
         from svd_lookup import SvdLookup
-        svd = SvdLookup(self.svd)
-        mock = (RENODE_SKILL / "assets" / "stm32g4_mock.repl").read_text(encoding="utf-8")
-        found = dict(re.findall(r"^(\w+): Memory\.MappedMemory @ sysbus (0x[0-9A-Fa-f]+)", mock, re.M))
+        svd = SvdLookup(svd_path)
+        found = dict(re.findall(r"^(\w+): [\w.]+ @ sysbus <?(0x[0-9A-Fa-f]+)", model_text, re.M))
         wrong = []
-        for name, peripheral in MOCK_TO_SVD.items():
+        for name, peripheral in mapping.items():
             if name not in found:
-                wrong.append("%s: not in mock" % name)
+                wrong.append("%s: not in model" % name)
                 continue
             base = svd.peripherals.get(peripheral, {}).get("base")
             if base != int(found[name], 16):
@@ -331,7 +364,15 @@ class Emulation(object):
                                                    hex(base) if base is not None else "missing"))
         if wrong:
             raise RuntimeError("; ".join(wrong))
-        return "%d stub addresses match %s" % (len(MOCK_TO_SVD), self.svd.name)
+        return "%d addresses match %s" % (len(mapping), svd_path.name)
+
+    def mock_vs_svd(self):
+        mock = (RENODE_SKILL / "assets" / "stm32g4_mock.repl").read_text(encoding="utf-8")
+        return self.model_vs_svd(mock, self.svd_g474, MOCK_TO_SVD)
+
+    def probe_model_vs_svd(self):
+        model = (self.probe / "emu" / "renode" / "stm32f4_probe.repl").read_text(encoding="utf-8")
+        return self.model_vs_svd(model, self.svd_f411, PROBE_MODEL_TO_SVD)
 
     def gdb(self):
         names = ("arm-none-eabi-gdb-py3", "gdb-multiarch", "arm-none-eabi-gdb")
@@ -342,65 +383,70 @@ class Emulation(object):
                 return path
         raise Skip("no GDB with Python (%s)" % ", ".join(names))
 
-    def resolve(self, extra, name):
-        out = OUT / ("addresses-%s.json" % name)
-        env = dict(self.env, GDB=self.gdb())
-        run([sys.executable, "-B", ROS_SKILL / "scripts" / "resolve_addresses.py", "--elf", self.elf,
-             "--spec", FIRMWARE / "fields.toml", "--out", out] + extra,
-            log=OUT / ("resolve-%s.log" % name), env=env, timeout=120)
-        fields = {item["expr"]: item["address"] for item in
-                  json.loads(out.read_text(encoding="utf-8"))["fields"]}
+    def resolve(self, board):
+        """Probe fields through resolve_addresses.py: symbols, a struct field by DWARF, SVD registers (F411)."""
+        fields = [("/probe/counter", "&probe_counter"), ("/probe/state", "&probe_state"),
+                  ("/probe/frames", "(char*)&probe_telemetry + (long)&((ProbeTelemetry*)0)->frames"),
+                  ("/probe/work_cycles", "(char*)&probe_telemetry + (long)&((ProbeTelemetry*)0)->work_cycles")]
+        extra = []
+        if board == "F411CE":
+            fields += [("/rcc/cr_hseon", "svd:RCC.CR.HSEON"), ("/gpiob/odr", "svd:GPIOB.ODR")]
+            extra = ["--svd", self.svd_f411]
+        spec = OUT / ("fields-%s.toml" % board.lower())
+        spec.write_text("".join('[[field]]\ntopic = "%s"\nmessage = "std_msgs/UInt32"\nkind = "uint32"\nexpr = "%s"\n\n'
+                                % (topic, expr) for topic, expr in fields), encoding="utf-8")
+        out = OUT / ("addresses-%s.json" % board.lower())
+        run([sys.executable, "-B", ROS_SKILL / "scripts" / "resolve_addresses.py", "--elf", self.elves[board],
+             "--spec", spec, "--out", out] + extra,
+            log=OUT / ("resolve-%s.log" % board.lower()), env=dict(self.env, GDB=self.gdb()), timeout=120)
+        resolved = {item["expr"]: item["address"] for item in json.loads(out.read_text(encoding="utf-8"))["fields"]}
         symbols = {}
-        for line in run([self.gcc / "arm-none-eabi-nm", self.elf]).splitlines():
+        for line in run([self.gcc / "arm-none-eabi-nm", self.elves[board]]).splitlines():
             parts = line.split()
             if len(parts) == 3:
                 symbols[parts[2]] = int(parts[0], 16)
-        for symbol in ("telemetry_counter", "telemetry_state"):
-            if fields["&" + symbol] != symbols[symbol]:
-                raise RuntimeError("%s: %#x, nm %#x" % (symbol, fields["&" + symbol], symbols[symbol]))
-        if fields["svd:RCC.RCC_CR.HSION"] != 0x40021000 or fields["svd:GPIOA.ODR"] != 0x48000014:
-            raise RuntimeError("SVD fields: %s" % fields)
-        return fields
+        for symbol in ("probe_counter", "probe_state"):
+            if resolved["&" + symbol] != symbols[symbol]:
+                raise RuntimeError("%s: %#x, nm %#x" % (symbol, resolved["&" + symbol], symbols[symbol]))
+        # ProbeTelemetry: frames at offset 0, work_cycles at 20 (src/probe.h).
+        base = symbols["probe_telemetry"]
+        if resolved[fields[2][1]] != base or resolved[fields[3][1]] != base + 20:
+            raise RuntimeError("struct fields: %s, probe_telemetry %#x" % (resolved, base))
+        if board == "F411CE" and (resolved["svd:RCC.CR.HSEON"] != 0x40023800 or resolved["svd:GPIOB.ODR"] != 0x40020414):
+            raise RuntimeError("SVD fields: %s" % resolved)
+        return resolved, fields
 
     def resolve_offline(self):
-        self.resolve([], "offline")
-        return "ELF symbols match nm, SVD registers resolved"
+        self.resolve("F411CE")
+        return "symbols match nm, struct fields by DWARF, F411 SVD registers"
 
-    def live(self):
-        """Read the resolved RAM addresses twice from the running emulated core.
-
-        The addresses come from resolve_addresses.py (ELF/DWARF), the reads from the Renode
-        monitor (sysbus ReadDoubleWord) between two RunFor slices: the same idea as route A
-        of stm32-ros-alt-channel (reading RAM while the firmware runs, no firmware changes),
-        with Renode in place of OpenOCD. The Renode GDB server is not used here: it needs an
-        IPv6-capable loopback, which some CI sandboxes lack.
-        """
-        fields = self.resolve([], "live")
-        counter, state = fields["&telemetry_counter"], fields["&telemetry_state"]
-        work = OUT / "live"
+    def live(self, board):
+        """Read the resolved RAM addresses twice from the running core in Renode (route A idea)."""
+        resolved, fields = self.resolve(board)
+        counter, state, frames = resolved["&probe_counter"], resolved["&probe_state"], resolved[fields[2][1]]
+        work = OUT / ("live-%s" % board.lower())
         if work.exists():
             shutil.rmtree(work)
         work.mkdir(parents=True)
-        platform = work / "platform.repl"
-        shutil.copy2(RENODE_SKILL / "assets" / "stm32g4_mock.repl", platform)
         script = work / "live.resc"
         script.write_text("\n".join([
-            "logLevel 3", "using sysbus", 'mach create "board"',
-            "machine LoadPlatformDescription @%s" % platform.as_posix(),
+            "logLevel 3", "using sysbus", 'mach create "probe"',
+            "machine LoadPlatformDescription @%s" % self.platform(board).as_posix(),
             "cpu.semihosting.uart CreateFileBackend @%s true" % (work / "startup.log").as_posix(),
-            "sysbus LoadELF @%s" % self.elf.as_posix(),
-            'emulation RunFor "0.2"', 'echo "A="', "sysbus ReadDoubleWord %#x" % counter,
-            'emulation RunFor "0.2"', 'echo "B="', "sysbus ReadDoubleWord %#x" % counter,
+            "sysbus LoadELF @%s" % self.elves[board].as_posix(),
+            'emulation RunFor "0.15"', 'echo "A="', "sysbus ReadDoubleWord %#x" % counter,
+            'echo "F="', "sysbus ReadDoubleWord %#x" % frames,
+            'emulation RunFor "0.15"', 'echo "B="', "sysbus ReadDoubleWord %#x" % counter,
+            'echo "G="', "sysbus ReadDoubleWord %#x" % frames,
             'echo "S="', "sysbus ReadDoubleWord %#x" % state, "quit", ""]), encoding="utf-8")
-        text = run([self.renode, "--disable-gui", "--console", "--plain",
-                    "-e", "include @%s" % script.as_posix()], log=work / "renode.log", timeout=120)
-        values = dict(re.findall(r"^([ABS])=\s*\n(0x[0-9A-Fa-f]+)", text, re.M))
-        if set(values) != {"A", "B", "S"}:
+        text = run([self.renode, "--disable-gui", "--console", "--plain", "-e", "include @%s" % script.as_posix()],
+                   log=work / "renode.log", timeout=120)
+        values = {key: int(value, 16) for key, value in re.findall(r"^([ABFGS])=\s*\n(0x[0-9A-Fa-f]+)", text, re.M)}
+        if set(values) != set("ABFGS"):
             raise RuntimeError("unexpected monitor output: %s" % text.strip()[-300:])
-        a, b, s = (int(values[key], 16) for key in "ABS")
-        if not 0 < a < b or s != 0xA5:
-            raise RuntimeError("counter %d -> %d, state %#x" % (a, b, s))
-        return "telemetry_counter %d -> %d at %#x, telemetry_state %#x at %#x" % (a, b, counter, s, state)
+        if not 0 < values["A"] < values["B"] or not values["F"] < values["G"] or values["S"] != 0xA5:
+            raise RuntimeError("counter %(A)d -> %(B)d, frames %(F)d -> %(G)d, state %(S)#x" % values)
+        return "probe_counter %(A)d -> %(B)d, frames %(F)d -> %(G)d, probe_state %(S)#x" % values
 
 
 def main(argv=None):
@@ -410,6 +456,8 @@ def main(argv=None):
     parser.add_argument("--strict", action="store_true", help="SKIP counts as failure")
     parser.add_argument("--tools", type=pathlib.Path, default=ROOT / "build" / "ci-tools",
                         help="directory for ci/fetch_tools.py downloads")
+    parser.add_argument("--probe", type=pathlib.Path,
+                        help="local stm32-skills-probe checkout instead of the pinned commit (development)")
     args = parser.parse_args(argv)
     OUT.mkdir(parents=True, exist_ok=True)
     runner = Runner(args.strict)
@@ -417,20 +465,25 @@ def main(argv=None):
         for name, function in KITS:
             runner.check(name, function)
     if "emulation" in args.stages:
-        emulation = Emulation(args.tools.resolve())
-        steps = [
-            ("emulation: fetch pinned tools", emulation.fetch),
-            ("stm32-vscode-cmake-scaffold: build firmware", emulation.firmware),
-            ("stm32-renode-emulator: Renode G474 boot", emulation.renode_boot),
-            ("stm32-renode-emulator: truncated log fails", emulation.negative_log),
-            ("stm32-renode-emulator: QEMU F411 boot", emulation.qemu_boot),
-            ("renode mock vs SVD (svd_lookup)", emulation.mock_vs_svd),
+        emulation = Emulation(args.tools.resolve(), args.probe)
+        steps = [("emulation: fetch pinned tools", emulation.fetch)]
+        for board in BOARDS:
+            steps.append(("stm32-skills-probe: build %s" % board, lambda b=board: emulation.build(b)))
+        for board in BOARDS:
+            steps.append(("stm32-renode-emulator: Renode %s" % board, lambda b=board: emulation.renode_boot(b)))
+        steps.append(("stm32-renode-emulator: truncated log fails", emulation.negative_log))
+        for board in ("F411CE", "F401CC"):
+            steps.append(("stm32-renode-emulator: QEMU %s" % board, lambda b=board: emulation.qemu_boot(b)))
+        steps += [
+            ("renode mock vs G474 SVD (svd_lookup)", emulation.mock_vs_svd),
+            ("probe model vs F411 SVD (svd_lookup)", emulation.probe_model_vs_svd),
             ("stm32-ros-alt-channel: resolve offline", emulation.resolve_offline),
-            ("stm32-ros-alt-channel: read RAM in Renode", emulation.live),
+            ("stm32-ros-alt-channel: read RAM in Renode F411CE", lambda: emulation.live("F411CE")),
+            ("stm32-ros-alt-channel: read RAM in Renode F103C8", lambda: emulation.live("F103C8")),
         ]
         for name, function in steps:
             runner.check(name, function)
-            if name.startswith(("emulation: fetch", "stm32-vscode")) and runner.results[-1]["status"] != "PASS":
+            if name.startswith(("emulation: fetch", "stm32-skills-probe")) and runner.results[-1]["status"] != "PASS":
                 break  # nothing to run without tools or firmware
     summary = {"schema": 1, "stages": args.stages, "strict": args.strict, "checks": runner.results}
     (OUT / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n",

@@ -91,10 +91,13 @@ arm-none-eabi-gdb build/firmware.elf -ex "target remote :3334"
 
 ## 5. Как это проверяется в CI репозитория
 
-`ci/run_checks.py emulation` собирает минимальную прошивку (`tests/firmware/boot-g474`) тулчейн-файлом
-навыка stm32-vscode-cmake-scaffold, прогоняет её через `run.py` в Renode 1.17 и QEMU с `--verify`,
-убеждается, что оборванный лог отклоняется, и сверяет адреса макета с SVD через `svd_lookup.py`
-навыка stm32-ros-alt-channel. Это доказательство работы комплекта в эмуляторе, а не на плате.
+`ci/run_checks.py emulation` собирает прошивку-зонд
+[stm32-skills-probe](https://github.com/ViacheslavMezentsev/stm32-skills-probe) для F411CE, F401CC и F103C8
+с семихостингом и выходом по времени (`-DPROBE_LOG_SEMIHOSTING=ON -DPROBE_EXIT_MS=500`), прогоняет её через
+`run.py` в Renode 1.17 (модель зонда, `--platform`) и в QEMU с `--verify` по ожиданиям зонда
+(`emu/expected/<плата>.toml`), убеждается, что оборванный лог отклоняется, и сверяет адреса макета G474 и
+модели зонда с SVD через `svd_lookup.py` навыка stm32-ros-alt-channel. Это доказательство работы комплекта
+в эмуляторе, а не на плате.
 
 ## Файлы навыка
 

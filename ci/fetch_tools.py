@@ -5,13 +5,15 @@
 
 Archives are cached in <dest>/downloads; a file whose hash does not match is
 deleted and the run fails. Each tool is unpacked into <dest>/<name>, and the
-directory is reused while its .sha256 marker matches the lock file.
+directory is reused while its .sha256 marker matches the lock file. A "git" entry
+is fetched at the pinned commit (the commit hash is the integrity check).
 """
 import argparse
 import hashlib
 import json
 import pathlib
 import shutil
+import subprocess
 import sys
 import tarfile
 import urllib.request
@@ -53,7 +55,32 @@ def safe_extract(archive, dest, strip):
             tar.extract(member, dest)
 
 
+def fetch_git(name, spec, dest):
+    """Shallow fetch of one commit; the checkout must resolve to exactly that commit."""
+    target = dest / name
+    marker = dest / (name + ".commit")
+    if marker.is_file() and marker.read_text().strip() == spec["commit"] and target.is_dir():
+        print("%-14s %s (cached)" % (name, spec["version"]))
+        return target
+    if target.exists():
+        shutil.rmtree(target)
+    target.mkdir(parents=True)
+    git = ["git", "-C", str(target), "-c", "advice.detachedHead=false"]
+    subprocess.run(git[:3] + ["init", "-q"], check=True)
+    print("%-14s fetching %s@%s" % (name, spec["url"], spec["commit"][:12]))
+    subprocess.run(git + ["fetch", "-q", "--depth", "1", spec["url"], spec["commit"]], check=True)
+    subprocess.run(git + ["checkout", "-q", "FETCH_HEAD"], check=True)
+    head = subprocess.run(git + ["rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+    if head != spec["commit"]:
+        raise SystemExit("%s: fetched %s, expected %s" % (name, head, spec["commit"]))
+    marker.write_text(spec["commit"] + "\n")
+    print("%-14s %s -> %s" % (name, spec["version"], target))
+    return target
+
+
 def fetch(name, spec, dest):
+    if spec["kind"] == "git":
+        return fetch_git(name, spec, dest)
     marker = dest / name / ".sha256"
     if marker.is_file() and marker.read_text().strip() == spec["sha256"]:
         print("%-14s %s (cached)" % (name, spec["version"]))

@@ -94,10 +94,11 @@ CI (workflow Skills) проверяет не только формат навы�
 - **Validate** — `skills-ref validate` для каждого навыка;
 - **Kits** — скрипты компилируются, assets загружаются, самопроверки навыков проходят
   (embedded-tech-spec, weact-logic-analyzer на синтетических сигналах, renode_compat);
-- **Emulation** — минимальная прошивка собирается тулчейн-файлом stm32-vscode-cmake-scaffold и
-  запускается в Renode 1.17 и QEMU навыком stm32-renode-emulator с проверкой стартового лога; макет
-  платформы сверяется с SVD, а stm32-ros-alt-channel находит адреса переменных прошивки и читает их
-  из работающего эмулятора.
+- **Emulation** — прошивка-зонд [stm32-skills-probe](https://github.com/ViacheslavMezentsev/stm32-skills-probe)
+  собирается для BlackPill F411CE и F401CC и Blue Pill F103C8 (F411CE — тулчейн-файлом
+  stm32-vscode-cmake-scaffold) и запускается в Renode 1.17 и QEMU навыком stm32-renode-emulator с проверкой
+  стартового лога; модели платформ сверяются с SVD, а stm32-ros-alt-channel находит адреса переменных и полей
+  структуры зонда и читает их из работающего эмулятора. Та же прошивка используется в исследованиях на стенде.
 
 Навыки проверяют друг друга, но только в эмуляторе: аппаратную проверку на стенде это не заменяет.
 Локальный запуск — `python3 ci/run_checks.py kits emulation` ([HOWTO](HOWTO.md)).
