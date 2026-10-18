@@ -12,7 +12,7 @@ from rtt_cleanup import cleanup
 LAYOUT = {"timer": {"cr1": 1, "dier": 2, "sr": 3, "bit_cen": 1, "bit_uie": 1},
           "nvic": {"iser": 0x100, "icer": 0x180, "ispr": 0x200, "icpr": 0x280, "bit": 29},
           "stub": 0x20001000, "params": 0x20001100, "vtor": 4,
-          "rcc": {"enable_reg": 5, "enable_bit": 2}}
+          "rcc": {"enable_reg": 5, "enable_bit": 2}, "tick_address": 6}
 SAVED = {"vtor": 0x08000000, "rcc": 1}
 MASK = 1 << 29
 
@@ -20,12 +20,14 @@ MASK = 1 << 29
 class Target:
     def __init__(self, steps=3, pc=0x20001000, ignore=None):
         self.memory = {1: 1, 2: 1, 3: 1, 4: 0x20002000, 5: 0x103,
-                       0x100: MASK, 0x200: MASK, 0x300: MASK if steps else 0}
+                       0x100: MASK, 0x200: MASK, 0x300: MASK if steps else 0,
+                       6: 10, 0xE000ED04: 0, 0xE000EDF0: 1 << 17}
         self.steps = steps
         self.address = pc
         self.ignore = ignore
         self.detached = False
         self.writes = []
+        self.quiesced = False
     def read(self, address):
         return self.memory[address]
     def write(self, address, value):
@@ -39,6 +41,7 @@ class Target:
         else:
             if address == 4:
                 assert self.memory[0x300] == 0, "VTOR restored with active exception"
+                assert self.quiesced, "VTOR restored before live quiescence"
             self.memory[address] = value
     def pc(self):
         return self.address
@@ -47,6 +50,12 @@ class Target:
         self.steps -= 1
         if self.steps == 0:
             self.memory[0x300] = 0
+    def run_window(self):
+        assert self.memory[4] == 0x20002000, "late IRQ must retain SRAM vector"
+        assert self.memory[1] == self.memory[2] == self.memory[3] == 0
+        assert self.memory[0x100] == self.memory[0x200] == 0
+        self.quiesced = True
+        self.memory[6] += 250
     def detach(self):
         self.detached = True
 
@@ -78,6 +87,37 @@ class CleanupTests(unittest.TestCase):
             target = Target(steps=0, ignore=address)
             with self.subTest(address=address), self.assertRaisesRegex(RuntimeError, "readback"):
                 cleanup(target, LAYOUT, SAVED, {})
+            self.assertFalse(target.detached)
+
+    def test_late_irq_after_resume_is_drained_before_restore(self):
+        class LateIRQ(Target):
+            def run_window(self):
+                super().run_window()
+                self.memory[0x300] = MASK
+                self.steps = 2
+        target, report = LateIRQ(steps=0), {}
+        cleanup(target, LAYOUT, SAVED, report)
+        self.assertEqual(report["active_before"], 0)
+        self.assertEqual(report["active_after_quiesce"], MASK)
+        self.assertEqual(report["steps"], 2)
+        self.assertTrue(target.detached)
+
+    def test_failed_quiescence_preserves_vector(self):
+        for fault in ("tick", "handler", "halt"):
+            class FailedWindow(Target):
+                def run_window(self):
+                    super().run_window()
+                    if fault == "tick":
+                        self.memory[6] -= 250
+                    elif fault == "handler":
+                        self.memory[0x300] = MASK
+                        self.address = 0x08000878
+                    else:
+                        self.memory[0xE000EDF0] = 0
+            target = FailedWindow(steps=0)
+            with self.subTest(fault=fault), self.assertRaises(RuntimeError):
+                cleanup(target, LAYOUT, SAVED, {})
+            self.assertNotIn(4, target.writes)
             self.assertFalse(target.detached)
 
 

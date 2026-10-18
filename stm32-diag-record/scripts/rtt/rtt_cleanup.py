@@ -28,16 +28,36 @@ def cleanup(target, layout, saved, report, max_steps=512):
     report["stage"] = "drain_handler"
     report["steps"] = 0
     report["active_before"] = target.read(active)
-    while target.read(active) & mask:
-        pc = target.pc() & ~1
-        report["last_pc"] = pc
-        # Не пытаться выводить прошивку из Default_Handler или неизвестного вложенного ISR.
-        if not layout["stub"] <= pc < layout["params"]:
-            raise RuntimeError("active timer outside RTT stub at 0x%08X; reset required" % pc)
-        if report["steps"] >= max_steps:
-            raise RuntimeError("RTT handler did not exit within instruction budget")
-        target.step()
-        report["steps"] += 1
+    def drain():
+        while target.read(active) & mask:
+            pc = target.pc() & ~1
+            report["last_pc"] = pc
+            # Не пытаться выводить прошивку из Default_Handler или неизвестного вложенного ISR.
+            if not layout["stub"] <= pc < layout["params"]:
+                raise RuntimeError("active timer outside RTT stub at 0x%08X; reset required" % pc)
+            if report["steps"] >= max_steps:
+                raise RuntimeError("RTT handler did not exit within instruction budget")
+            target.step()
+            report["steps"] += 1
+    drain()
+    # Нулевой IABR при halt недостаточен: сначала выполнить прошивку со старым
+    # SRAM-вектором и уже выключенным источником, затем снова проверить IRQ.
+    report["stage"] = "quiesce"
+    report["tick_before_quiesce"] = target.read(layout["tick_address"])
+    target.run_window()
+    report["pc_after_quiesce"] = target.pc()
+    report["active_after_quiesce"] = target.read(active)
+    report["icsr_after_quiesce"] = target.read(0xE000ED04)
+    report["dhcsr_after_quiesce"] = target.read(0xE000EDF0)
+    report["tick_after_quiesce"] = target.read(layout["tick_address"])
+    if not report["dhcsr_after_quiesce"] & (1 << 17):
+        raise RuntimeError("core did not halt after quiescence window")
+    drain()
+    if not 0 < ((report["tick_after_quiesce"] - report["tick_before_quiesce"]) & 0xFFFFFFFF) < 0x80000000:
+        raise RuntimeError("tick did not advance with SRAM vector retained")
+    check(timer["cr1"], 0, timer["bit_cen"])
+    check(timer["dier"], 0, timer["bit_uie"])
+    check(timer["sr"], 0, 1)
     report["active_after"] = check(active, 0, mask)
     check(nvic["ispr"], 0, mask)
     # Повторная проверка после step: неизвестная команда/помеха не должна дать ложный успех.
@@ -69,6 +89,12 @@ def gdb_main(config_path):
             return int(gdb.parse_and_eval("$pc"))
         def step(self):
             gdb.execute("stepi", to_string=True)
+        def run_window(self):
+            # monitor запускает ядро вне управления GDB: после halt сбросить его кеш.
+            for command in ("monitor resume", "monitor sleep 250", "monitor halt",
+                            "maintenance flush register-cache"):
+                print(command, flush=True)
+                print(gdb.execute(command, to_string=True), flush=True)
         def detach(self):
             gdb.execute("detach", to_string=True)
     try:
