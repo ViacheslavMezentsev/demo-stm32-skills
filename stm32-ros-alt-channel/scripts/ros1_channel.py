@@ -25,6 +25,7 @@
 import argparse
 import pathlib
 import shutil
+import shlex
 import subprocess
 import sys
 import time
@@ -487,6 +488,31 @@ def dryrun(args):
     return code
 
 
+def select_hz_topic(listing, requested="all", explicit=None):
+    """Choose an advertised application topic, respecting the recording filter."""
+    topics = sorted({line.strip() for line in listing.splitlines()
+                     if line.strip().startswith("/")
+                     and line.strip() not in ("/rosout", "/rosout_agg")})
+    if explicit:
+        return explicit if explicit in topics else None
+    if requested != "all":
+        allowed = {topic.strip() for topic in requested.split(",")}
+        topics = [topic for topic in topics if topic in allowed]
+    return next((topic for topic in topics if topic.endswith("/tick_ms")),
+                topics[0] if topics else None)
+
+
+def measure_frequency(topic):
+    if not topic:
+        return False, "нет подходящего опубликованного топика"
+    result = wsl("%s && export ROS_MASTER_URI=%s && timeout -s INT 8 rostopic hz %s 2>&1"
+                 % (ROS_SETUP, ROS_MASTER_URI, shlex.quote(topic)), timeout=60)
+    rates = [line.strip() for line in result.stdout.splitlines() if "average rate:" in line]
+    if result.returncode in (0, 124) and rates:
+        return True, rates[-1]
+    return False, "нет измеренной частоты: " + (result.stdout + result.stderr).strip()[-300:]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -497,6 +523,7 @@ def main():
     parser.add_argument("--record", choices=["none", "bag", "mcap"], default="none")
     parser.add_argument("--out", default="", help="имя файла записи")
     parser.add_argument("--topics", default="all", help="список топиков или all")
+    parser.add_argument("--hz-topic", help="опубликованный топик для проверки частоты (по умолчанию автоматически)")
     parser.add_argument("--compress", choices=["none", "bz2"], default="none",
                         help="сжатие для bag (bz2 — stdlib, читает rosbag)")
     parser.add_argument("--chunk-size", type=int, default=1000,
@@ -548,7 +575,7 @@ def main():
         stop_all()
         return 1
 
-    listing = wsl("%s && export ROS_MASTER_URI=%s && rostopic list | grep -v '^/rosout' | head -8"
+    listing = wsl("%s && export ROS_MASTER_URI=%s && rostopic list -p"
                   % (ROS_SETUP, ROS_MASTER_URI))
     print("\n=== 2. Топики ===")
     for line in listing.stdout.strip().splitlines():
@@ -569,10 +596,9 @@ def main():
             print("  запись идёт; остановить: Ctrl+C или --cleanup")
 
     print("\n=== 3. Проверка ===")
-    hz = wsl("%s && export ROS_MASTER_URI=%s && timeout 8 rostopic hz "
-             "/board/sensor/batt_v 2>&1 | grep 'average rate' | tail -1" % (ROS_SETUP, ROS_MASTER_URI),
-             timeout=60)
-    print("  частота: %s" % (hz.stdout.strip() or "нет данных"))
+    hz_topic = select_hz_topic(listing.stdout, args.topics, args.hz_topic)
+    hz_ok, hz_detail = measure_frequency(hz_topic)
+    print("  частота [%s]: %s" % (hz_topic or args.hz_topic or "не выбран", hz_detail))
     if recorded and recorded.is_file():
         print("  файл: %s (%d байт)" % (recorded, recorded.stat().st_size))
         if recorded.suffix == ".mcap":
@@ -583,8 +609,9 @@ def main():
 
     if args.keep:
         print("\n=== 4. Канал оставлен работать ===")
-        print("  в WSL: . /opt/ros/noetic/setup.bash && rostopic echo /board/sensor/batt_v")
-        print("  остановить: python run_channel.py --cleanup")
+        if hz_topic:
+            print("  в WSL: . /opt/ros/noetic/setup.bash && rostopic echo %s" % shlex.quote(hz_topic))
+        print("  остановить: Ctrl+C в этом окне")
         try:
             while True:
                 time.sleep(1.0)
@@ -594,7 +621,7 @@ def main():
         print("\n=== 4. Остановка ===")
         stop_all()
         print("  остановлено")
-    return 0
+    return 0 if hz_ok else 1
 
 
 if __name__ == "__main__":

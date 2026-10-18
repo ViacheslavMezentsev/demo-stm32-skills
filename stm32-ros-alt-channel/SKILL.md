@@ -5,7 +5,7 @@ license: MIT
 compatibility: Windows с Python 3.8+, OpenOCD и ST-Link; WSL2 (Ubuntu) с ROS Noetic и socat; WSL в режиме mirrored networking, чтобы обращаться к службам Windows по 127.0.0.1; счётчик времени ядра WSL должен быть исправен (см. раздел про время)
 metadata:
   author: Viacheslav Mezentsev
-  version: "1.4.0"
+  version: "1.4.1"
   kind: diagnostic-channel
   transports: swd-openocd, uart-rosserial
   formats: rosbag2-ros1, mcap
@@ -58,6 +58,9 @@ pyserial — в `tools/scripts/` проекта или по пути `ROS1_TCP_S
 и `svd_lookup.py` SVD задаётся `--svd` или `STM32_SVD`, GDB с Python — из `PATH`, `GDB` или
 `STM32_TOOLCHAIN_PATH`.
 
+Проверка частоты выбирает реально опубликованный топик из `--topics` (предпочитает `*/tick_ms`),
+либо явно заданный `--hz-topic /bp/tick_ms`. Нет топика/измеренной частоты — код завершения 1.
+
 При `--via both` маршрут A публикуется в дерево `/swd/...`, чтобы имена не совпали с rosserial-топиками.
 
 ## 3. Зависимости на стороне MCU (маршрут A)
@@ -107,17 +110,14 @@ python scripts/svd_lookup.py ADC1.SR.EOC   # адрес, сдвиг, маска
 
 ## 6. Точность времени: проверять перед измерениями
 
-`monotonic` в WSL **не годится** для поиска пауз: он замирает вместе с гостем. Нужна внешняя опора.
+Перед точной записью сравните часы WSL с Windows и отдельно счётчик платы с Windows.
+Исследование 19 выявило конфликт коррекции часов: замедление monotonic и скачки realtime,
+а не остановку ВМ. Старый вывод о «замирающем monotonic» был опровергнут.
 
-| Симптом | Причина | Решение |
-|---|---|---|
-| паузы 1.5–2.8 с каждые ~30 с у всех топиков | неверный `tick` ядра WSL | привести `tick` к `10000`, отключить `systemd-timesyncd`, `wsl --shutdown` |
-| данные «замерли», плата работала | подвод часов гостя | тот же |
-| нужно мерить время без доверия к ВМ | — | брать счётчик платы (`uwTick`, 1 мс) в записи |
-
-Проверка тика: `wsl -d <дистрибутив> -u root -e python3 scripts/wsl_tick.py` → ожидается `tick = 10000`.
-Опора на часы хоста: `scripts/host_clock.py` на Windows и `scripts/host_ref_probe.py` в WSL; норма —
-`mono/host ≈ 1.000` и «шагов 0».
+Порядок, команды, признаки ошибки и аппаратные результаты F411CE:
+[проверка времени](references/time-validation.md). В комплекте — `wsl_tick.py` (только чтение),
+`host_clock.py` (Windows UDP-опора), `host_ref_probe.py --seconds 120 --out clock-report.json` (WSL).
+Не применяйте исправления служб/NTP до диагностики; эти скрипты настройки не меняют.
 
 ## 7. Что не работает и почему
 

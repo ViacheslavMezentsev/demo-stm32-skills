@@ -431,6 +431,7 @@ def check_rtt_frames():
 
 
 def check_debug_tools():
+    run([sys.executable, "-B", ROOT / "ci/test_ros_clock_validation.py"], log=OUT / "ros-clock-validation.log")
     for skill in ("stm32-ros-alt-channel", "stm32-diag-record"):
         run([sys.executable, "-B", ROOT / "ci/test_shared_debug_tools.py"],
             env=dict(os.environ, SHARED_TEST_SKILL=skill), log=OUT / (skill + "-shared.log"))

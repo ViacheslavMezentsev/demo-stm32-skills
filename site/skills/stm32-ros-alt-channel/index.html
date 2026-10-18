@@ -127,11 +127,11 @@
   </div>
   <div class="box">
     <h2>Время в WSL</h2>
-    <p>Часы виртуальной машины могут замирать вместе с ней, и тогда в записи появляются ложные паузы.</p>
+    <p>Исследование 19 установило конфликт коррекции часов: monotonic замедлялся, realtime прыгал. Ранний вывод об остановке ВМ был опровергнут.</p>
     <ul>
-      <li>паузы по 1,5–2,8 с каждые ~30 с — неверный <code>tick</code> ядра WSL: привести к 10000 и перезапустить WSL;</li>
+      <li>при паузах сравните REALTIME, MONOTONIC и RAW с независимыми часами Windows; настройки NTP меняют после диагностики;</li>
       <li>проверка: <code>wsl_tick.py</code>, сравнение с часами Windows — <code>host_clock.py</code> и <code>host_ref_probe.py</code>;</li>
-      <li>для точных интервалов добавьте в поля счётчик платы (1 мс).</li>
+      <li>счётчик платы тоже калибруйте относительно Windows: номинальная миллисекунда не гарантирует точность.</li>
     </ul>
     <p>Если ROS не нужен, а нужен только файл, — навык <a href="../stm32-diag-record/">stm32-diag-record</a>: та же запись без WSL.</p>
   </div>
@@ -158,18 +158,25 @@
   в Emulation используются адреса из ELF <code>stm32-skills-probe</code>.</p>
   <p>Назначение маршрутов сохраняется: ROS/WSL и rosserial — в ROS-навыке, запись без ROS,
   Renode и RTT — в diag-record. В CI тест ROS-публикации подменяет middleware. Локально проверена также публикация через
-  настоящий ROS Noetic в WSL с TCP-имитатором OpenOCD; UART и работа на плате требуют отдельной проверки.</p>
+  настоящий ROS Noetic в WSL с TCP-имитатором OpenOCD; SWD на F411CE проверен владельцем после рефакторинга; UART требует отдельной проверки.</p>
 </div>
 
 <div class="box">
   <h2>Насколько проверено</h2>
+  <p>19.10.2026, F411CE, версия d003ca5: SWD → ROS Noetic, семь топиков, около 10 Гц,
+  MCAP 700 сообщений (по 100 на поле), fault=0, LED продолжает мигать после завершения.
+  Tick платы отстал от Windows на 2,72% при независимом чтении без ROS; текущая проба WSL
+  за 120 с не выявила скачков. Источник расхождения внутри тракта времени платы ещё уточняется.</p>
+  <p>Проверка частоты выбирает реальный опубликованный топик, предпочтительно tick_ms;
+  можно указать <code>--hz-topic /bp/tick_ms</code>. Методика:
+  <a href="https://github.com/ViacheslavMezentsev/demo-stm32-skills/blob/main/stm32-ros-alt-channel/references/time-validation.md">Windows, WSL и MCU</a>.</p>
   <div class="cols" style="margin-bottom:0">
     <div><h3 style="color: var(--success)">Проверяется в CI репозитория</h3><ul><li>адреса по ELF зонда: символы совпадают с nm, поля структур — с DWARF, регистры — с SVD F411</li><li>чтение RAM работающего ядра в Renode для F411CE и F103C8</li><li>писатели bag и MCAP (общие с stm32-diag-record): файлы читаются библиотеками mcap и rosbags</li></ul></div>
-    <div><h3 style="color: var(--attention)">Ещё не проверено</h3><ul><li>полный запуск ROS/WSL с платой и маршрут rosserial: только на стенде</li><li>частота опроса и влияние на прошивку (R8), потери маршрута B (R9), время в WSL (R10)</li></ul></div>
+    <div><h3 style="color: var(--attention)">Ещё не проверено</h3><ul><li>UART/rosserial после рефакторинга; калибровка аппаратного времени</li><li>частота опроса и влияние на прошивку (R8), потери маршрута B (R9), время в WSL (R10)</li></ul></div>
   </div>
 </div>
 
-<p><a href="https://github.com/ViacheslavMezentsev/demo-stm32-skills/tree/main/stm32-ros-alt-channel">Описание навыка (SKILL.md) и скрипты</a> · версия 1.4.0</p>
+<p><a href="https://github.com/ViacheslavMezentsev/demo-stm32-skills/tree/main/stm32-ros-alt-channel">Описание навыка (SKILL.md) и скрипты</a> · версия 1.4.1</p>
 </main>
 <footer class="site-footer">
   <div class="inner">

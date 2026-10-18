@@ -1,20 +1,28 @@
 #!/usr/bin/env python3
-"""Показать tick ядра (adjtimex). Ожидается 10000 (100 Гц).
-
-Если tick другой, гостевое время WSL уходит и периодически подводится — отсюда паузы в записях ROS.
-Запуск: wsl -d Ubuntu-20.04 -u root -e python3 /mnt/.../scripts/wsl_tick.py
-"""
+"""Read-only adjtimex for 64-bit Linux/WSL. No clock settings are changed."""
 import ctypes
-
+import os
 
 class Timex(ctypes.Structure):
-    _fields_ = [("modes", ctypes.c_int), ("offset", ctypes.c_long), ("freq", ctypes.c_long),
+    _fields_ = [("modes", ctypes.c_uint), ("offset", ctypes.c_long), ("freq", ctypes.c_long),
                 ("maxerror", ctypes.c_long), ("esterror", ctypes.c_long), ("status", ctypes.c_int),
-                ("constant", ctypes.c_long), ("precision", ctypes.c_long),
-                ("tolerance", ctypes.c_long), ("time", ctypes.c_long * 2),
-                ("tick", ctypes.c_long)]
+                ("constant", ctypes.c_long), ("precision", ctypes.c_long), ("tolerance", ctypes.c_long),
+                ("time", ctypes.c_long * 2), ("tick", ctypes.c_long), ("ppsfreq", ctypes.c_long),
+                ("jitter", ctypes.c_long), ("shift", ctypes.c_int), ("stabil", ctypes.c_long),
+                ("jitcnt", ctypes.c_long), ("calcnt", ctypes.c_long), ("errcnt", ctypes.c_long),
+                ("stbcnt", ctypes.c_long), ("tai", ctypes.c_int), ("padding", ctypes.c_int * 11)]
 
+def read_timex():
+    if os.name != "posix" or ctypes.sizeof(ctypes.c_long) != 8:
+        raise RuntimeError("нужен 64-битный Linux/WSL")
+    value = Timex()  # modes=0: query only
+    libc = ctypes.CDLL("libc.so.6", use_errno=True)
+    libc.adjtimex.argtypes = [ctypes.POINTER(Timex)]
+    libc.adjtimex.restype = ctypes.c_int
+    if libc.adjtimex(ctypes.byref(value)) < 0:
+        raise OSError(ctypes.get_errno(), "adjtimex")
+    return {"tick": value.tick, "freq_ppm": value.freq / 65536.0, "status": value.status}
 
-value = Timex()
-ctypes.CDLL("libc.so.6", use_errno=True).adjtimex(ctypes.byref(value))
-print("tick = %d %s" % (value.tick, "ок" if abs(value.tick - 10000) <= 5 else "НЕВЕРНО, ожидается 10000"))
+if __name__ == "__main__":
+    import json
+    print(json.dumps(read_timex()))

@@ -67,6 +67,17 @@ def main():
                 time.sleep(0.1)
             if seen != {"signed": -1, "shift": 18}:
                 raise RuntimeError("unexpected ROS values: %s" % seen)
+            import ros1_channel as channel
+            channel.ROS_MASTER_URI = os.environ["ROS_MASTER_URI"]
+            # Run the same command locally in WSL; only the Windows launcher is replaced.
+            channel.wsl = lambda command, timeout=120: subprocess.run(
+                ["bash", "-lc", command], capture_output=True, text=True, timeout=timeout)
+            listing = channel.wsl("source /opt/ros/noetic/setup.bash && export ROS_MASTER_URI=%s && rostopic list -p" % channel.ROS_MASTER_URI)
+            topic = channel.select_hz_topic(listing.stdout, "/signed")
+            ok, detail = channel.measure_frequency(topic)
+            if not ok:
+                raise RuntimeError("real frequency check failed: " + detail)
+            print("PASS real ROS frequency", topic, detail)
             print("PASS real ROS Noetic master + telemetry_node + TCP fake OpenOCD:", seen)
             for subscriber in subscribers:
                 subscriber.unregister()
