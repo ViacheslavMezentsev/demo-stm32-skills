@@ -34,6 +34,8 @@ HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 sys.path.insert(0, str(HERE))
 import record_diag as diag  # noqa: E402
+from openocd_link import mdw, mww, set_bits
+from gdb_tools import find_gdb
 from rtt_frames import FrameReader  # noqa: E402
 
 RTT_SERVER_PORT = 19021
@@ -45,25 +47,6 @@ def validate_topics(layout):
     topics = [field["topic"] for field in layout["fields"]]
     if len(set(topics)) != len(topics) or set(topics) & {SEQ_TOPIC, TICK_TOPIC}:
         raise ValueError("топики полей должны быть уникальными и не занимать /_diag/rtt/seq, /_diag/rtt/tick_ms")
-
-
-def mdw(telnet, address):
-    """Прочитать слово по адресу через OpenOCD. Разбирает строку '0x...: значение', игнорируя
-    асинхронные сообщения и управляющие символы (telnet OpenOCD любит их подмешивать)."""
-    text = telnet.command("mdw 0x%08X" % address) or ""
-    # Значение принимается только из строки с тем же адресом: чужой ответ не выдаётся за наш.
-    match = re.search(r"0x0*%x:\s*([0-9a-f]{1,8})\b" % address, text, re.IGNORECASE)
-    if match:
-        return int(match.group(1), 16)
-    raise RuntimeError("mdw 0x%08X не вернул значение: %r" % (address, text[-60:]))
-
-
-def mww(telnet, address, value):
-    telnet.command("mww 0x%08X 0x%08X" % (address, value & 0xFFFFFFFF))
-
-
-def set_bits(telnet, address, mask):
-    mww(telnet, address, mdw(telnet, address) | mask)
 
 
 def resolve_tick(args, elf, workdir):
@@ -131,17 +114,7 @@ def install(telnet, layout, image_path, saved):
 
 
 def cleanup_gdb(args):
-    suffix = ".exe" if os.name == "nt" else ""
-    candidates = [pathlib.Path(args.cleanup_gdb)] if args.cleanup_gdb else [
-        pathlib.Path(args.toolchain) / (name + suffix) for name in ("arm-none-eabi-gdb-py3", "arm-none-eabi-gdb")]
-    for candidate in candidates:
-        if not candidate.is_file():
-            continue
-        result = subprocess.run([str(candidate), "--nx", "--batch", "-ex", "python print('RTT_GDB_READY')"],
-                                capture_output=True, text=True, timeout=15)
-        if result.returncode == 0 and "RTT_GDB_READY" in result.stdout:
-            return str(candidate.resolve())
-    raise RuntimeError("нужен GDB с Python: --cleanup-gdb <путь>")
+    return find_gdb(explicit=args.cleanup_gdb, toolchain=args.toolchain)
 
 
 def teardown(telnet, layout, saved, args, out, gdb):

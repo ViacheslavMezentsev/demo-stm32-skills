@@ -44,7 +44,7 @@ openocd qemu-system-arm ninja-build gdb-multiarch`. Загрузки (`ci/fetch_
 Навык копируют в проект отдельной папкой, поэтому общий код лежит в каждом навыке, который им пользуется.
 Оригинал один, остальные — побайтные копии; список — `SHARED` в `ci/sync_shared.py`. Сейчас оригинал —
 `stm32-ros-alt-channel/scripts/` (`resolve_addresses.py`, `svd_lookup.py`, `bag_writer.py`, `mcap_writer.py`,
-`msg_types.py`), копии — в `stm32-diag-record/scripts/`.
+`msg_types.py`, `openocd_link.py`, `field_values.py`, `gdb_tools.py`, `process_tools.py`), копии — в `stm32-diag-record/scripts/`.
 
 ```sh
 python3 ci/sync_shared.py            # после правки оригинала: обновить копии
@@ -333,3 +333,24 @@ OpenOCD: `shutdown command invoked` до подключения GDB указыв
 При отказе смотрите `build/ci/diag-renode/record.log` и `record.mcap`; прежняя ошибка выводила
 лишь первые шесть значений, скрывая реальное число циклов и конкретное условие отказа.
 Регрессионная проверка без Renode: `python3 ci/test_diag_renode_samples.py`.
+
+### Общий транспорт: проверять оба потребителя
+
+После изменения общей базы запустите `python3 ci/sync_shared.py`, затем Kits и Emulation.
+Kits запускает тесты каждой самодостаточной копии, включая ROS-ноду с подменой middleware и
+реальным TCP-сервером OpenOCD для тестов. Emulation дополнительно использует адреса из ELF
+закреплённого stm32-skills-probe и независимые читатели MCAP/bag. Это не аппаратная проверка
+ROS/WSL или rosserial: их отдельно проверяют на стенде. `GDB` и `--cleanup-gdb` теперь проверяются
+на поддержку Python; ошибочный явный путь не заменяется другим отладчиком молча.
+
+Проверка с настоящим ROS Noetic (локально, без платы и существующего ROS-master):
+
+```sh
+source /opt/ros/noetic/setup.bash
+python3 ci/test_ros_live.py
+```
+
+Тест запускает свой master на свободном порту, настоящую telemetry_node и подписчиков;
+OpenOCD заменён TCP-имитатором. После теста его процессы завершаются. Прогон подтверждён
+в WSL 2026-10-19: знаковое поле −1, поле со сдвигом 18. Полный Windows/WSL-маршрут и UART
+этим тестом не покрываются.

@@ -430,6 +430,13 @@ def check_rtt_frames():
     return "resync, chunking, seq-gap drops (2), kinds/shift/mask; APB1 timer-clock decode"
 
 
+def check_debug_tools():
+    for skill in ("stm32-ros-alt-channel", "stm32-diag-record"):
+        run([sys.executable, "-B", ROOT / "ci/test_shared_debug_tools.py"],
+            env=dict(os.environ, SHARED_TEST_SKILL=skill), log=OUT / (skill + "-shared.log"))
+    return "both skill copies: TCP noise, ROS publishing, masks, GDB selection, process ownership"
+
+
 def check_shared():
     text = run([sys.executable, "-B", ROOT / "ci" / "sync_shared.py", "--check"])
     return text.strip().splitlines()[-1]
@@ -437,6 +444,7 @@ def check_shared():
 
 KITS = [
     ("kits: shared modules match their originals", check_shared),
+    ("kits: shared debug tools in both skills", check_debug_tools),
     ("pages: site/ links and assets", check_site),
     ("kits: python scripts compile", check_python),
     ("kits: shell scripts parse", check_shell),
@@ -680,6 +688,10 @@ class Emulation(object):
              "--svd", self.svd_f411, "--out", addresses], log=work / "resolve.log", env=env, timeout=120)
         fields = json.loads(addresses.read_text(encoding="utf-8"))["fields"]
         by_topic = {field["topic"]: field for field in fields}
+        for consumer in ("stm32-ros-alt-channel", "stm32-diag-record"):
+            run([sys.executable, "-B", ROOT / "ci/test_shared_debug_tools.py"],
+                env=dict(self.env, SHARED_TEST_SKILL=consumer, PROBE_ADDRESSES=str(addresses)),
+                log=work / (consumer + "-shared.log"))
         if len(fields) != 8 or by_topic["/probe/tick_ms"]["address"] != by_topic["/probe/uptime_s"]["address"]:
             raise RuntimeError("fields with the same expr must stay separate: %s" % [f["topic"] for f in fields])
         import struct as _struct

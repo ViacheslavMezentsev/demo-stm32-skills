@@ -43,12 +43,14 @@ import time
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+from openocd_link import Telnet, OpenOcdReader, read_words, WORD_LINE
+from field_values import aligned_needed, word_at, convert
+from process_tools import isolated_process_options, spawn_logged, wait_port, stop_process as stop_openocd
+
 from bag_writer import BagWriter  # noqa: E402
 from mcap_writer import McapWriter  # noqa: E402
 
 KINDS = ("uint32", "int32", "float32", "uint32_seconds")
-WORD_LINE = re.compile(r"^0x([0-9a-fA-F]+):((?:\s+[0-9a-fA-F]{8})+)", re.M)
-CLUSTER_BYTES = 256  # соседние адреса в пределах окна читаются одной командой mdw
 DEFAULT_PORTS = {"openocd": 4444, "renode": 1234}
 RENODE_PROMPT = re.compile(r"(?:^|\n)\(([^()\n]*)\) ")
 ADAPTER_HINTS = ("stlink", "st-link", "cmsis-dap", "j-link", "jlink", "serial", "target voltage", "vtarget",
@@ -141,148 +143,19 @@ def resolve(args, elf, out_dir):
 
 # ---------------------------------------------------------------- OpenOCD
 
-def isolated_process_options():
-    """Ctrl+C обрабатывает рекордер; серверы нужны до окончания восстановления."""
-    if os.name == "nt":
-        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
-    return {"start_new_session": True}
-
-
 def start_openocd(args, log_path):
     if args.use_running:
         return None
-    with log_path.open("w", encoding="utf-8", errors="replace") as log:
-        process = subprocess.Popen(openocd_command(args), stdout=log, stderr=subprocess.STDOUT,
-                                   **isolated_process_options())
-    deadline = time.monotonic() + 20.0
-    while time.monotonic() < deadline:
-        if process.poll() is not None:
-            break
-        try:
-            socket.create_connection((args.host, args.port), timeout=1).close()
+    process = spawn_logged(openocd_command(args), log_path)
+    try:
+        if wait_port(args.host, args.port, process):
             return process
-        except OSError:
-            time.sleep(0.5)
+    except BaseException:
+        stop_openocd(process)
+        raise
     stop_openocd(process)
     raise SystemExit("OpenOCD не поднялся на порт %d (журнал: %s)" % (args.port, log_path))
 
-
-def stop_openocd(process):
-    if process is None or process.poll() is not None:
-        return
-    process.terminate()
-    try:
-        process.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait(timeout=5)
-
-
-class Telnet(object):
-    """Минимальный клиент telnet OpenOCD: команда -> текст ответа до приглашения '> '."""
-
-    def __init__(self, host, port, timeout=2.0):
-        self.sock = socket.create_connection((host, port), timeout=10)
-        self.sock.settimeout(timeout)
-        self.buffer = b""
-        self._read_until_prompt()  # приветствие и согласование telnet
-
-    @staticmethod
-    def _clean(data):
-        # Последовательности согласования telnet (IAC = 0xFF) и управляющие символы не нужны.
-        data = re.sub(rb"\xff[\xfb-\xfe].|\xff[\xf0-\xfa]", b"", data)
-        return data.decode("utf-8", "replace").replace("\r", "").replace("\x00", "")
-
-    def _read_until_prompt(self):
-        while True:
-            text = self._clean(self.buffer)
-            position = text.rfind("\n> ")
-            if position >= 0 or text.startswith("> ") or text.endswith("> "):
-                self.buffer = b""
-                return text
-            try:
-                chunk = self.sock.recv(4096)
-            except socket.timeout:
-                self.buffer = b""
-                return None
-            if not chunk:
-                raise ConnectionError("OpenOCD закрыл соединение")
-            self.buffer += chunk
-
-    @staticmethod
-    def _render(text):
-        # OpenOCD стирает строку ввода забоями (\b), чтобы напечатать асинхронное сообщение, и потом
-        # перепечатывает приглашение и ввод. Применяем забои, как терминал, чтобы найти эхо целиком.
-        out = []
-        for char in text:
-            if char == "\b":
-                if out:
-                    out.pop()
-            else:
-                out.append(char)
-        return "".join(out)
-
-    def command(self, line):
-        """Ответ на команду: текст после эха этой команды до следующего приглашения '> '.
-
-        OpenOCD рассылает асинхронные сообщения во все сеансы telnet со своим приглашением — например,
-        'error during read: Bad file descriptor', когда замечает закрытое чужое соединение (так выглядит
-        проверка готовности порта в start_openocd на Windows). Если считать ответом всё до первого
-        приглашения, ответы сдвигаются на одну команду и mdw возвращает чужое значение. Поэтому ответ
-        отсчитывается от эха команды, а текст до эха (асинхронные сообщения) отбрасывается."""
-        self.buffer = b""
-        self.sock.sendall((line + "\n").encode("ascii"))
-        data = b""
-        while True:
-            text = self._render(self._clean(data))
-            echo = text.find(line)
-            if echo >= 0:
-                rest = text[echo + len(line):]
-                end = rest.find("\n> ")
-                if end >= 0:
-                    return rest[:end].strip("\n")
-            try:
-                chunk = self.sock.recv(4096)
-            except socket.timeout:
-                return None
-            if not chunk:
-                raise ConnectionError("OpenOCD закрыл соединение")
-            data += chunk
-
-    def close(self):
-        self.sock.close()
-
-
-def read_words(telnet, addresses):
-    """Слова по выровненным адресам: соседние читаются одной командой mdw. Возвращает {адрес: слово}."""
-    words = {}
-    pending = sorted(set(addresses))
-    while pending:
-        start = pending[0]
-        group = [a for a in pending if a - start < CLUSTER_BYTES]
-        pending = pending[len(group):]
-        count = (group[-1] - start) // 4 + 1
-        text = telnet.command("mdw 0x%08X %d" % (start, count))
-        if not text:
-            continue
-        for match in WORD_LINE.finditer(text):
-            base = int(match.group(1), 16)
-            for index, value in enumerate(match.group(2).split()):
-                words[base + 4 * index] = int(value, 16)
-    return words
-
-
-class OpenOcdReader(object):
-    """Чтение слов через telnet OpenOCD (mdw)."""
-
-    def __init__(self, host, port):
-        self.telnet = Telnet(host, port)
-
-    def read_words(self, addresses):
-        return read_words(self.telnet, addresses)
-
-    def close(self):
-        self.telnet.close()
 
 
 class RenodeReader(object):
@@ -350,35 +223,6 @@ def open_reader(args):
     if args.backend == "renode":
         return RenodeReader(args.host, args.port, args.machine)
     return OpenOcdReader(args.host, args.port)
-
-
-def aligned_needed(address):
-    base = address & ~3
-    return [base] if base == address else [base, base + 4]
-
-
-def word_at(words, address):
-    """32-битное слово little-endian по любому адресу (невыровненный собирается из двух)."""
-    base, offset = address & ~3, address & 3
-    if offset == 0:
-        return words.get(base)
-    low, high = words.get(base), words.get(base + 4)
-    if low is None or high is None:
-        return None
-    return ((low | (high << 32)) >> (8 * offset)) & 0xFFFFFFFF
-
-
-def convert(word, kind, shift=0, mask=0xFFFFFFFF):
-    if kind == "float32":
-        return struct.unpack("<f", struct.pack("<I", word))[0]
-    value = (word & mask) >> shift
-    if kind == "uint32_seconds":
-        return value // 1000
-    if kind == "int32":
-        # Поле короче слова (маска): знак берётся из старшего бита поля, а не слова.
-        width = (mask >> shift).bit_length() if mask != 0xFFFFFFFF else 32
-        return value - (1 << width) if width and value & (1 << (width - 1)) else value
-    return value
 
 
 # ---------------------------------------------------------------- доктор

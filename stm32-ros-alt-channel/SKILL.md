@@ -5,7 +5,7 @@ license: MIT
 compatibility: Windows с Python 3.8+, OpenOCD и ST-Link; WSL2 (Ubuntu) с ROS Noetic и socat; WSL в режиме mirrored networking, чтобы обращаться к службам Windows по 127.0.0.1; счётчик времени ядра WSL должен быть исправен (см. раздел про время)
 metadata:
   author: Viacheslav Mezentsev
-  version: "1.3.0"
+  version: "1.4.0"
   kind: diagnostic-channel
   transports: swd-openocd, uart-rosserial
   formats: rosbag2-ros1, mcap
@@ -44,7 +44,7 @@ python scripts/ros1_channel.py --via rosserial --keep   # маршрут B, см
 python scripts/ros1_channel.py --via both --keep        # оба сразу (SWD в отдельном дереве /swd/...)
 python scripts/ros1_channel.py --via openocd --record mcap --seconds 10 --out probe.mcap
 python scripts/ros1_channel.py --via rosserial --record bag --compress bz2 --seconds 20
-python scripts/ros1_channel.py --cleanup                # остановить всё и проверить остатки
+python scripts/ros1_channel.py --cleanup                # остановить процессы канала и проверить остатки
 ```
 
 Параметры: `--via openocd|rosserial|both`, `--record none|bag|mcap`, `--out ИМЯ`,
@@ -150,3 +150,16 @@ scripts/wsl_tick.py          проверка tick ядра
 `resolve_addresses.py`, `svd_lookup.py`, `bag_writer.py`, `mcap_writer.py` и `msg_types.py` — оригиналы общих
 модулей: их побайтные копии лежат в навыке stm32-diag-record (запись в файл без ROS) и обновляются
 `ci/sync_shared.py` репозитория. Правки — только здесь.
+
+## Общая база скриптов
+
+`openocd_link.py`, `field_values.py`, `gdb_tools.py`, `process_tools.py` обеспечивают транспорт
+OpenOCD с синхронизацией по эху, декодирование полей (mask/shift и невыровненные адреса),
+поиск GDB с Python и управление собственными процессами. ROS им не требуется.
+В репозитории оригиналы находятся в `stm32-ros-alt-channel/scripts`, копии в `stm32-diag-record/scripts`
+обновляет `python3 ci/sync_shared.py`; CI проверяет совпадение. В проект копируется папка навыка целиком.
+Политика сброса, ROS/WSL и снятие RTT-перехвата остаются в сценариях соответствующих навыков.
+
+`--cleanup` не завершает сторонний или ранее запущенный OpenOCD по имени. Сервер,
+подключённый по уже занятому порту, принадлежит запустившему его процессу; завершайте его отдельно.
+Для ROS-полей поддерживаются `mask` и `shift`, в том числе после добавления префикса `/swd`.

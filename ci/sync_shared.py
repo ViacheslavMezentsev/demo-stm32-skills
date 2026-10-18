@@ -17,7 +17,10 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 # Оригинал (каталог навыка) -> файлы -> навыки, в которые они копируются.
 SHARED = {
     "stm32-ros-alt-channel/scripts": {
-        "files": ["bag_writer.py", "mcap_writer.py", "msg_types.py", "svd_lookup.py", "resolve_addresses.py"],
+        "files": [
+            "bag_writer.py", "mcap_writer.py", "msg_types.py", "svd_lookup.py", "resolve_addresses.py",
+            "openocd_link.py", "field_values.py", "gdb_tools.py", "process_tools.py",
+        ],
         "copies": ["stm32-diag-record/scripts"],
     },
 }

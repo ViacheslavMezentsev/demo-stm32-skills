@@ -15,11 +15,10 @@
 """
 import json
 import pathlib
-import re
-import socket
-import struct
 import sys
-import time
+
+from openocd_link import OpenOcdReader, Telnet
+from field_values import aligned_needed, word_at, convert
 
 import rospy
 from std_msgs.msg import Float32, Int32, UInt32
@@ -37,58 +36,13 @@ MESSAGES = {
 }
 
 
-class OpenOcdLink:
-    """Чтение памяти цели через telnet OpenOCD — без остановки ядра."""
-
+class OpenOcdLink(OpenOcdReader):
+    """ROS-совместимый адаптер общего транспорта OpenOCD."""
     def __init__(self, host=OPENOCD_HOST, port=OPENOCD_TELNET, timeout=3.0):
-        self.sock = socket.create_connection((host, port), timeout=timeout)
-        self.sock.settimeout(timeout)
-        self._read_until_prompt()
-
-    def _read_until_prompt(self):
-        chunks = []
-        deadline = time.monotonic() + 2.0
-        while time.monotonic() < deadline:
-            try:
-                data = self.sock.recv(4096)
-            except socket.timeout:
-                break
-            if not data:
-                break
-            chunks.append(data)
-            if data.rstrip().endswith(b">"):
-                break
-        return b"".join(chunks).decode("utf-8", "replace")
+        self.telnet = Telnet(host, port, timeout)
 
     def read_word(self, address):
-        """Прочитать 32-битное слово.
-
-        Разбор ответа РЕГИСТРОНЕЗАВИСИМЫЙ: OpenOCD печатает адрес в нижнем регистре (`0x20000c60`), и
-        поиск по шаблону в верхнем регистре не находил его — канал молчал.
-        """
-        self.sock.sendall(("mdw 0x%08X 1\n" % address).encode())
-        answer = self._read_until_prompt()
-        match = re.search(r"0x%08X:\s*([0-9a-fA-F]{8})" % address, answer, re.IGNORECASE)
-        return int(match.group(1), 16) if match else None
-
-    def close(self):
-        try:
-            self.sock.close()
-        except OSError:
-            pass
-
-
-def convert(word, kind):
-    """Преобразовать прочитанное слово в значение нужного вида."""
-    if kind == "float32":
-        return struct.unpack("<f", struct.pack("<I", word))[0]
-    if kind == "int32":
-        return struct.unpack("<i", struct.pack("<I", word))[0]
-    if kind == "uint32":
-        return word
-    if kind == "uint32_seconds":
-        return word // 1000
-    raise ValueError("неизвестный kind: %s" % kind)
+        return word_at(self.read_words(aligned_needed(address)), address)
 
 
 def load_spec(path):
@@ -138,7 +92,7 @@ def main():
                 if word is None:
                     skipped += 1
                     continue
-                value = convert(word, field["kind"])
+                value = convert(word, field["kind"], field.get("shift", 0), field.get("mask", 0xFFFFFFFF))
                 # Правдоподобность: отсекает чтение «не той» памяти.
                 low, high = field.get("min"), field.get("max")
                 if (low is not None and value < low) or (high is not None and value > high):

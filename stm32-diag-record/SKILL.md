@@ -5,7 +5,7 @@ license: MIT
 compatibility: Windows или Linux с Python 3.9+ (3.11+ или пакет tomli для resolve_addresses.py), OpenOCD 0.11+ и SWD-пробник, который он поддерживает (ST-Link, CMSIS-DAP, J-Link и др.) или Renode 1.15+ без платы, GDB с Python для адресов по ELF, SVD-файл для полей svd:; для режима rtt-timer дополнительно тулчейн arm-none-eabi (as/ld/objcopy) и Cortex-M3/M4; ROS не требуется
 metadata:
   author: Viacheslav Mezentsev
-  version: "1.7.0"
+  version: "1.8.0"
   kind: diagnostic-recorder
   outputs: mcap, rosbag-ros1
   entrypoint: scripts/record_diag.py
@@ -351,3 +351,12 @@ scripts/rtt/boards.toml      параметры стендов (таймер, IR
 
 Пути считаются от каталога `scripts/`; ELF, SVD и файлы записи задаются аргументами или переменными
 окружения.
+
+## Общая база скриптов
+
+`openocd_link.py`, `field_values.py`, `gdb_tools.py`, `process_tools.py` обеспечивают транспорт
+OpenOCD с синхронизацией по эху, декодирование полей (mask/shift и невыровненные адреса),
+поиск GDB с Python и управление собственными процессами. ROS им не требуется.
+В репозитории оригиналы находятся в `stm32-ros-alt-channel/scripts`, копии в `stm32-diag-record/scripts`
+обновляет `python3 ci/sync_shared.py`; CI проверяет совпадение. В проект копируется папка навыка целиком.
+Политика сброса, ROS/WSL и снятие RTT-перехвата остаются в сценариях соответствующих навыков.

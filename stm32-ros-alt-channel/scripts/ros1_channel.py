@@ -29,6 +29,8 @@ import subprocess
 import sys
 import time
 
+from process_tools import spawn_logged, stop_process, wait_port as wait_tcp_port
+
 HERE = pathlib.Path(__file__).resolve().parent
 import os
 # Корень проекта прошивки: ELF, SVD (resources/STM32<профиль>.svd) и журналы ищутся от него.
@@ -67,15 +69,10 @@ def spawn(name, command, user=None, wsl_process=True):
     """Долгоживущий процесс. Для WSL — обязательно дочерний: `nohup ... &` внутри wsl не выживает."""
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     log = LOG_DIR / ("%s.log" % name)
-    handle = open(log, "wb")
     if wsl_process:
         prefix = ["wsl", "-d", DISTRO] + (["-u", user] if user else [])
-        process = subprocess.Popen(prefix + ["-e", "bash", "-lc", command],
-                                   stdout=handle, stderr=subprocess.STDOUT,
-                                   stdin=subprocess.DEVNULL)
-    else:
-        process = subprocess.Popen(command, stdout=handle, stderr=subprocess.STDOUT,
-                                   stdin=subprocess.DEVNULL)
+        command = prefix + ["-e", "bash", "-lc", command]
+    process = spawn_logged(command, log)
     _processes.append(process)
     return process, log
 
@@ -112,12 +109,10 @@ def stop_all():
     wsl("rm -f $HOME/.ros/roscore-*.pid $HOME/.ros/rosmaster*.pid 2>/dev/null")
     wsl("pkill -f '[s]ocat.*ttyVirtual0' 2>/dev/null; rm -f /dev/ttyVirtual0", user="root")
     for process in _processes:
-        if process.poll() is None:
-            process.terminate()
+        stop_process(process)
     # openocd и tcp_serial_redirect живут на Windows, их WSL-очистка не видит. Раньше редиректор
     # снимался только в маршруте B, и после --cleanup порт 7777 оставался занят.
     subprocess.run(["powershell", "-NoProfile", "-Command",
-                    "Get-Process openocd -ErrorAction SilentlyContinue | Stop-Process -Force; "
                     "Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'python.exe' -and "
                     "$_.CommandLine -like '*tcp_serial_redirect*' } | "
                     "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; "
@@ -297,8 +292,9 @@ def start_openocd():
     arguments = ["openocd", "-f", "interface/stlink.cfg", "-f", "target/stm32f4x.cfg",
                  "-c", "bindto 0.0.0.0", "-c", "gdb_port 3333", "-c", "telnet_port 4444",
                  "-c", "init", "-c", "reset run"]
-    spawn("openocd", arguments, wsl_process=False)
-    if not wait_port(4444):
+    process, _log = spawn("openocd", arguments, wsl_process=False)
+    if not wait_tcp_port("127.0.0.1", 4444, process):
+        stop_process(process)
         raise SystemExit("OpenOCD не поднялся (журнал build/channel/openocd.log)")
 
 
@@ -321,7 +317,7 @@ def prepare_swd_spec(args):
         # иначе sensor/batt_v и aio/batt_v схлопываются в один /swd/batt_v.
         field["topic"] = "/swd" + field["topic"]
         lines.append("[[field]]")
-        for key in ("topic", "message", "kind", "expr", "min", "max"):
+        for key in ("topic", "message", "kind", "expr", "min", "max", "mask", "shift"):
             if key in field:
                 lines.append("%s = %s" % (key, json.dumps(field[key])))
     path = (ROOT / args.elf).parent / "channel" / "fields-swd.toml"

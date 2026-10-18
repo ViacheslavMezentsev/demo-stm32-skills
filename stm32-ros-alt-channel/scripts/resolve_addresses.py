@@ -36,34 +36,7 @@ except ModuleNotFoundError:                       # Python < 3.11
     import tomli as tomllib
 
 DEFAULT_ELF = os.environ.get("FIRMWARE_ELF", "build/firmware.elf")
-# GDB с Python: xPack (Windows/Linux) или gdb-multiarch из дистрибутива Linux.
-GDB_NAMES = ("arm-none-eabi-gdb-py3", "arm-none-eabi-gdb", "gdb-multiarch")
-
-
-def find_gdb():
-    """Найти gdb с поддержкой Python: $GDB, затем PATH, затем $STM32_TOOLCHAIN_PATH/bin."""
-    import shutil
-
-    if os.environ.get("GDB"):
-        return os.environ["GDB"]
-    toolchain = os.environ.get("STM32_TOOLCHAIN_PATH")
-    for name in GDB_NAMES:
-        found = shutil.which(name)
-        if not found and toolchain:
-            found = shutil.which(name, path=str(pathlib.Path(toolchain) / "bin"))
-        if found and gdb_has_python(found):
-            return found
-    raise SystemExit("не найден GDB с Python (%s); задайте GDB=<путь>" % ", ".join(GDB_NAMES))
-
-
-def gdb_has_python(gdb):
-    """Есть ли в этой сборке GDB поддержка Python (xPack без -py3 её не имеет)."""
-    try:
-        result = subprocess.run([gdb, "-q", "-batch", "-ex", "python print(42)"],
-                                capture_output=True, text=True, timeout=60)
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return result.returncode == 0 and "42" in result.stdout
+from gdb_tools import find_gdb, gdb_has_python
 
 
 def build_gdb_script(fields, elf, out_path, target=None):

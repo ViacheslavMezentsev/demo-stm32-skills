@@ -108,7 +108,7 @@
     <div class="step"><b>План</b><code>--dryrun</code>: проверки и план без запуска.</div>
     <div class="step"><b>Маршрут</b><code>--via openocd | rosserial | both</code>, смотреть с <code>--keep</code>.</div>
     <div class="step"><b>Запись</b><code>--record bag | mcap --seconds N</code>.</div>
-    <div class="step"><b>Уборка</b><code>--cleanup</code>: останавливает ROS, OpenOCD и редиректор, проверяет остатки.</div>
+    <div class="step"><b>Уборка</b><code>--cleanup</code>: останавливает ROS, собственный OpenOCD и редиректор, проверяет остатки.</div>
   </div>
 </div>
 
@@ -149,14 +149,27 @@
   </div>
 </div>
 <div class="box">
+  <h2>Общая база диагностики</h2>
+  <p>Оба навыка используют одинаковые модули чтения OpenOCD, декодирования полей,
+  поиска GDB и управления дочерними процессами. Исправления транспорта применяются
+  к записи в файл и к публикации ROS. Поддерживаются маски, сдвиги и невыровненные поля.</p>
+  <p>Источник модулей — <code>stm32-ros-alt-channel</code>; каждый навык содержит полную копию
+  нужных скриптов и устанавливается самостоятельно. CI проверяет совпадение копий и оба потребителя,
+  в Emulation используются адреса из ELF <code>stm32-skills-probe</code>.</p>
+  <p>Назначение маршрутов сохраняется: ROS/WSL и rosserial — в ROS-навыке, запись без ROS,
+  Renode и RTT — в diag-record. В CI тест ROS-публикации подменяет middleware. Локально проверена также публикация через
+  настоящий ROS Noetic в WSL с TCP-имитатором OpenOCD; UART и работа на плате требуют отдельной проверки.</p>
+</div>
+
+<div class="box">
   <h2>Насколько проверено</h2>
   <div class="cols" style="margin-bottom:0">
     <div><h3 style="color: var(--success)">Проверяется в CI репозитория</h3><ul><li>адреса по ELF зонда: символы совпадают с nm, поля структур — с DWARF, регистры — с SVD F411</li><li>чтение RAM работающего ядра в Renode для F411CE и F103C8</li><li>писатели bag и MCAP (общие с stm32-diag-record): файлы читаются библиотеками mcap и rosbags</li></ul></div>
-    <div><h3 style="color: var(--attention)">Ещё не проверено</h3><ul><li>узлы ROS в WSL и маршрут rosserial: только на стенде</li><li>частота опроса и влияние на прошивку (R8), потери маршрута B (R9), время в WSL (R10)</li></ul></div>
+    <div><h3 style="color: var(--attention)">Ещё не проверено</h3><ul><li>полный запуск ROS/WSL с платой и маршрут rosserial: только на стенде</li><li>частота опроса и влияние на прошивку (R8), потери маршрута B (R9), время в WSL (R10)</li></ul></div>
   </div>
 </div>
 
-<p><a href="https://github.com/ViacheslavMezentsev/demo-stm32-skills/tree/main/stm32-ros-alt-channel">Описание навыка (SKILL.md) и скрипты</a> · версия 1.3.0</p>
+<p><a href="https://github.com/ViacheslavMezentsev/demo-stm32-skills/tree/main/stm32-ros-alt-channel">Описание навыка (SKILL.md) и скрипты</a> · версия 1.4.0</p>
 </main>
 <footer class="site-footer">
   <div class="inner">

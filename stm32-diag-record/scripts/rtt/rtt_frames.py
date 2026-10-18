@@ -17,7 +17,7 @@ import sys
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
-from record_diag import convert  # noqa: E402
+from field_values import convert  # noqa: E402
 
 MAGIC = 0xD1A6
 MAGIC_LE = struct.pack("<H", MAGIC)

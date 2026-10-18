@@ -192,13 +192,14 @@ class HostChecks(unittest.TestCase):
 class ProcessIsolation(unittest.TestCase):
     def test_openocd_isolated_on_windows_and_posix(self):
         import record_diag as diag
+        import process_tools
         for platform, expected in (("nt", {"creationflags": 0x200}),
                                    ("posix", {"start_new_session": True})):
             with tempfile.TemporaryDirectory() as directory:
                 log = pathlib.Path(directory) / "server.log"
                 args = SimpleNamespace(use_running=False, host="127.0.0.1", port=4444)
                 process = SimpleNamespace(poll=lambda: None)
-                with patch.object(diag, "os", SimpleNamespace(name=platform)), \
+                with patch.object(process_tools, "os", SimpleNamespace(name=platform)), \
                      patch.object(diag.subprocess, "CREATE_NEW_PROCESS_GROUP", 0x200, create=True), \
                      patch.object(diag, "openocd_command", return_value=["openocd"]), \
                      patch.object(diag.subprocess, "Popen", return_value=process) as spawn, \
