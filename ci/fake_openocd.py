@@ -12,14 +12,29 @@
 import re
 import socket
 import threading
+import time
 
 MDW = re.compile(r"^mdw\s+(0x[0-9a-fA-F]+|\d+)(?:\s+(\d+))?\s*$")
 
+# Асинхронное сообщение OpenOCD о закрытом чужом соединении (Windows): строка ввода стирается
+# забоями, печатается сообщение, затем приглашение и уже набранный ввод печатаются заново.
+ASYNC_MESSAGE = "error during read: Bad file descriptor"
+
+
+def async_noise(partial=""):
+    shown = "> " + partial
+    erase = "\b" * len(shown) + " " * len(shown) + "\b" * len(shown)
+    return erase + ASYNC_MESSAGE + "\r\n" + shown
+
 
 class FakeOpenOcd(object):
-    def __init__(self, memory):
-        """memory: {выровненный адрес: функция(номер чтения этого адреса) -> 32-битное слово}."""
+    def __init__(self, memory, noise=None):
+        """memory: {выровненный адрес: функция(номер чтения этого адреса) -> 32-битное слово}.
+        noise: {номер команды с 0: "before" | "midecho"} — где подмешать асинхронное сообщение:
+        до эха команды или посреди эха (со стиранием и перепечаткой строки ввода)."""
         self.memory = memory
+        self.noise = dict(noise or {})
+        self.count = 0
         self.reads = {}
         self.commands = []
         self.server = socket.socket()
@@ -86,5 +101,18 @@ class FakeOpenOcd(object):
                     if not line:
                         connection.sendall(b"> ")
                         continue
-                    reply = line + "\r\n" + self._answer(line) + "> "
+                    kind = self.noise.get(self.count)
+                    self.count += 1
+                    # Как у настоящего OpenOCD: асинхронное сообщение уходит отдельным сегментом,
+                    # ответ — позже, после выполнения команды.
+                    echo = line
+                    if kind == "before":
+                        connection.sendall(async_noise().encode("utf-8"))
+                        time.sleep(0.05)
+                    elif kind == "midecho":
+                        half = line[:len(line) // 2]
+                        connection.sendall((half + async_noise(half)).encode("utf-8"))
+                        time.sleep(0.05)
+                        echo = line[len(half):]
+                    reply = echo + "\r\n" + self._answer(line) + "> "
                     connection.sendall(reply.encode("utf-8"))

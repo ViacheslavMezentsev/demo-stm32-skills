@@ -41,7 +41,8 @@ def mdw(telnet, address):
     """Прочитать слово по адресу через OpenOCD. Разбирает строку '0x...: значение', игнорируя
     асинхронные сообщения и управляющие символы (telnet OpenOCD любит их подмешивать)."""
     text = telnet.command("mdw 0x%08X" % address) or ""
-    match = re.search(r"0x[0-9a-fA-F]+:\s*([0-9a-fA-F]{1,8})", text)
+    # Значение принимается только из строки с тем же адресом: чужой ответ не выдаётся за наш.
+    match = re.search(r"0x0*%x:\s*([0-9a-f]{1,8})\b" % address, text, re.IGNORECASE)
     if match:
         return int(match.group(1), 16)
     raise RuntimeError("mdw 0x%08X не вернул значение: %r" % (address, text[-60:]))

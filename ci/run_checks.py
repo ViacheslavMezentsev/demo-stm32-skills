@@ -299,6 +299,43 @@ def check_diag_doctor():
     return "ST-Link, CMSIS-DAP (two cores), J-Link absent, missing config; extra commands before init"
 
 
+def check_diag_telnet_async():
+    """Асинхронные сообщения OpenOCD ('error during read: Bad file descriptor' о закрытом чужом
+    соединении, Windows) не сдвигают ответы telnet: ответ отсчитывается от эха команды."""
+    sys.path.insert(0, str(ROOT / "ci"))
+    sys.path.insert(0, str(ROOT / "stm32-diag-record" / "scripts"))
+    sys.path.insert(0, str(ROOT / "stm32-diag-record" / "scripts" / "rtt"))
+    import socket as _socket
+    from fake_openocd import FakeOpenOcd
+    import record_diag as diag
+    import rtt_timer
+    vtor, rcc = 0xE000ED08, 0x40023840
+    memory = {vtor: lambda n: 0x08000000, rcc: lambda n: 0x00000011, 0x20000000: lambda n: 0x100 + n}
+    # Помеха настоящая: наивное чтение до первого приглашения возвращает не ответ на mdw.
+    with FakeOpenOcd(memory, noise={0: "before"}) as server:
+        raw = _socket.create_connection(("127.0.0.1", server.port), timeout=2)
+        data = b""
+        while b"> " not in data:
+            data += raw.recv(4096)
+        raw.sendall(b"mdw 0xE000ED08\n")
+        data = b""
+        while b"\n> " not in data:
+            data += raw.recv(4096)
+        raw.close()
+        assert b"0xe000ed08:" not in data.split(b"\n> ")[0], "noise did not precede the answer"
+    noise = {0: "before", 1: "midecho", 3: "before", 4: "midecho"}
+    with FakeOpenOcd(memory, noise=noise) as server:
+        telnet = diag.Telnet("127.0.0.1", server.port)
+        assert rtt_timer.mdw(telnet, vtor) == 0x08000000, "VTOR after async message"
+        assert rtt_timer.mdw(telnet, rcc) == 0x11, "RCC after mid-echo message"
+        telnet.command("halt")
+        words = diag.read_words(telnet, [0x20000000])
+        assert words == {0x20000000: 0x100}, words
+        assert rtt_timer.mdw(telnet, rcc) == 0x11 and rtt_timer.mdw(telnet, vtor) == 0x08000000, "responses shifted"
+        telnet.close()
+    return "async OpenOCD messages before and inside the echo: mdw/read_words stay aligned"
+
+
 def check_site():
     """site/ (GitHub Pages): local links and assets exist, no external scripts or styles, theme button on every page."""
     site = ROOT / "site"
@@ -375,6 +412,7 @@ KITS = [
     ("stm32-rtt-console: OpenOCD RTT commands", check_openocd_rtt),
     ("stm32-diag-record: conversion helpers", check_diag_helpers),
     ("stm32-diag-record: doctor parses OpenOCD output", check_diag_doctor),
+    ("stm32-diag-record: telnet survives async OpenOCD messages", check_diag_telnet_async),
     ("stm32-diag-record: rtt-timer frame parser", check_rtt_frames),
 ]
 
@@ -812,33 +850,101 @@ class Emulation(object):
                 "doctor elf_facts (SP 0x%08X, SystemCoreClock)" % (pends, pends, ticks[0], ticks[-1], sp_top))
 
     def list_signals(self):
-        """--list-signals: офлайн-перечисление глобальных переменных зонда из ELF (GDB+DWARF) в CSV.
-        Проверяем раскрытие структуры на поля, карту kind (float32/int32/uint32), фильтр по пути и
-        отсев функций/невыразимых типов."""
+        """--list-signals: глобальные переменные из ELF (GDB+DWARF) в CSV, только проверенные в GDB выражения.
+
+        Зонд: раскрытие структуры, карта kind, адреса по nm, маска для полей короче слова, фильтр пути.
+        Тестовый ELF: вложенные структуры и --depth, внутреннее пространство имён C++, одноимённые static
+        из разных файлов, знаковое int16, отсев массивов/битовых полей/64-битного. Затем каждая строка CSV
+        проходит resolve_addresses.py и обязана дать тот же адрес (CSV пригоден без доработки)."""
         import csv as _csv
-        elf = self.elves["F411CE"]
         work = OUT / "list-signals"
         if work.exists():
             shutil.rmtree(work)
         work.mkdir(parents=True)
-        out = work / "signals.csv"
-        run([sys.executable, "-B", ROOT / "stm32-diag-record" / "scripts" / "record_diag.py",
-             "--list-signals", "--elf", elf, "--signals-path", "probe.cpp", "--out", str(out)],
-            log=work / "list.log", env=dict(self.env, GDB=self.gdb()), timeout=120)
-        rows = {r["expr"]: r for r in _csv.DictReader(out.open(encoding="utf-8"))}
+        env = dict(self.env, GDB=self.gdb())
+        record = ROOT / "stm32-diag-record" / "scripts" / "record_diag.py"
+
+        def listing(elf, out, path, depth=None):
+            command = [sys.executable, "-B", record, "--list-signals", "--elf", elf, "--signals-path", path,
+                       "--out", str(out)] + (["--signals-depth", str(depth)] if depth is not None else [])
+            text = run(command, log=work / (out.stem + ".log"), env=env, timeout=120)
+            return {r["expr"]: r for r in _csv.DictReader(out.open(encoding="utf-8"))}, text
+
+        def resolve_back(elf, rows, name):
+            spec = work / (name + ".toml")
+            spec.write_text("".join(
+                '[[field]]\ntopic = "/t/%d"\nmessage = "%s"\nkind = "%s"\nexpr = "%s"\n%s\n'
+                % (i, r["message"], r["kind"], r["expr"], ("mask = %s\n" % r["mask"]) if r["mask"] else "")
+                for i, r in enumerate(rows.values())), encoding="utf-8")
+            out = work / (name + ".json")
+            run([sys.executable, "-B", ROS_SKILL / "scripts" / "resolve_addresses.py", "--elf", elf, "--spec", spec,
+                 "--out", out], log=work / (name + "-resolve.log"), env=env, timeout=120)
+            fields = json.loads(out.read_text(encoding="utf-8"))["fields"]
+            bad = [(r["expr"], r["address"], hex(f["address"])) for r, f in zip(rows.values(), fields)
+                   if int(r["address"], 16) != f["address"]]
+            if bad:
+                raise RuntimeError("CSV не совпал с resolve_addresses: %s" % bad)
+
+        # 1. Зонд.
+        elf = self.elves["F411CE"]
+        rows, _text = listing(elf, work / "probe.csv", "probe.cpp")
+        symbols = {}
+        for line in run([self.gcc / "arm-none-eabi-nm", elf]).splitlines():
+            parts = line.split()
+            if len(parts) == 3:
+                symbols[parts[2]] = int(parts[0], 16)
         expect = {"&probe_counter": "uint32", "&probe_telemetry.frames": "uint32",
                   "&probe_telemetry.ramp": "float32", "&probe_telemetry.sine_milli": "int32"}
         for expr, kind in expect.items():
-            if expr not in rows:
-                raise RuntimeError("нет %s в CSV (%s)" % (expr, sorted(rows)))
-            if rows[expr]["kind"] != kind:
-                raise RuntimeError("%s: kind %s, ожидалось %s" % (expr, rows[expr]["kind"], kind))
+            if expr not in rows or rows[expr]["kind"] != kind:
+                raise RuntimeError("%s: %s, ожидался kind %s" % (expr, rows.get(expr), kind))
+        if int(rows["&probe_counter"]["address"], 16) != symbols["probe_counter"]:
+            raise RuntimeError("адрес probe_counter: %s, nm %#x" % (rows["&probe_counter"]["address"], symbols["probe_counter"]))
+        if rows["&probe_telemetry.flags"]["mask"] != "0xFF" or rows["&probe_telemetry.samples"]["mask"] != "0xFFFF":
+            raise RuntimeError("маски коротких полей: %s" % {k: v["mask"] for k, v in rows.items()})
         if any("probe.cpp" not in r["file"] for r in rows.values()):
             raise RuntimeError("фильтр по пути пропустил чужой файл: %s" % sorted(rows))
-        if any("(" in expr for expr in rows):           # функции и указатели на функции не должны попадать
-            raise RuntimeError("в списке оказалась функция: %s" % sorted(rows))
-        return "%d переменных из probe.cpp; структура раскрыта в поля, kind float32/int32/uint32, фильтр пути" % len(rows)
+        resolve_back(elf, rows, "probe-back")
+        probe_count = len(rows)
 
+        # 2. Тестовый ELF с трудными случаями.
+        src = work / "src"
+        src.mkdir()
+        (src / "main.cpp").write_text(
+            "#include <stdint.h>\n"
+            "struct Inner { uint32_t a; int16_t b; uint8_t c; };\n"
+            "struct Outer { uint8_t flag; Inner in; float f; uint16_t arr[3]; uint32_t bits : 3; };\n"
+            "volatile Outer g_outer;\n"
+            "namespace { volatile uint32_t g_hidden; }\n"
+            "static volatile int32_t s_twin = 1;\n"
+            "volatile uint64_t g_wide;\n"
+            "int twin_other();\n"
+            "extern \"C\" void _start() { g_hidden = s_twin + twin_other() + g_outer.flag + (int)g_wide; for (;;) {} }\n",
+            encoding="utf-8")
+        (src / "twin.cpp").write_text("#include <stdint.h>\nstatic volatile int32_t s_twin = 2;\n"
+                                      "int twin_other() { return s_twin; }\n", encoding="utf-8")
+        test_elf = work / "signals-test.elf"
+        run([self.gcc / "arm-none-eabi-g++", "-mcpu=cortex-m4", "-mthumb", "-g3", "-O0", "-nostdlib",
+             "-fno-exceptions", "-fno-rtti", "-Wl,-Ttext=0x08000000", "-Wl,-Tdata=0x20000000", "-Wl,--entry=_start",
+             src / "main.cpp", src / "twin.cpp", "-o", test_elf], log=work / "signals-test-build.log", timeout=120)
+        deep, text = listing(test_elf, work / "test-d2.csv", "src/", depth=2)
+        shallow, text1 = listing(test_elf, work / "test-d1.csv", "src/", depth=1)
+        need = {"&g_outer.in.a": ("uint32", ""), "&g_outer.in.b": ("int32", "0xFFFF"), "&g_outer.flag": ("uint32", "0xFF"),
+                "&g_outer.f": ("float32", ""), "&'(anonymous namespace)::g_hidden'": ("uint32", ""),
+                "&'main.cpp'::s_twin": ("int32", ""), "&'twin.cpp'::s_twin": ("int32", "")}
+        for expr, (kind, mask) in need.items():
+            if expr not in deep or (deep[expr]["kind"], deep[expr]["mask"]) != (kind, mask):
+                raise RuntimeError("%s: %s, ожидалось %s/%s (есть: %s)" % (expr, deep.get(expr), kind, mask, sorted(deep)))
+        if "&s_twin" in deep or any(e in deep for e in ("&g_outer.arr", "&g_outer.bits", "&g_wide")):
+            raise RuntimeError("лишние строки: %s" % sorted(deep))
+        if any(e.startswith("&g_outer.in.") for e in shallow) or "структура глубже --depth 1" not in text1:
+            raise RuntimeError("--depth 1 раскрыл вложенную структуру: %s" % sorted(shallow))
+        for reason in ("массив", "битовое поле", "не читается одним словом"):
+            if reason not in text:
+                raise RuntimeError("в сводке нет причины «%s»" % reason)
+        resolve_back(test_elf, deep, "test-back")
+        return ("зонд: %d строк, адреса = nm, маски коротких полей; тест: --depth 1/2, anonymous namespace, "
+                "static-двойники через 'файл'::, int16 с маской; все строки CSV = resolve_addresses" % probe_count)
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__,

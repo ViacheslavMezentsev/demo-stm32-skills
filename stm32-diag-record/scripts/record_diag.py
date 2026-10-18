@@ -200,9 +200,45 @@ class Telnet(object):
                 raise ConnectionError("OpenOCD закрыл соединение")
             self.buffer += chunk
 
+    @staticmethod
+    def _render(text):
+        # OpenOCD стирает строку ввода забоями (\b), чтобы напечатать асинхронное сообщение, и потом
+        # перепечатывает приглашение и ввод. Применяем забои, как терминал, чтобы найти эхо целиком.
+        out = []
+        for char in text:
+            if char == "\b":
+                if out:
+                    out.pop()
+            else:
+                out.append(char)
+        return "".join(out)
+
     def command(self, line):
+        """Ответ на команду: текст после эха этой команды до следующего приглашения '> '.
+
+        OpenOCD рассылает асинхронные сообщения во все сеансы telnet со своим приглашением — например,
+        'error during read: Bad file descriptor', когда замечает закрытое чужое соединение (так выглядит
+        проверка готовности порта в start_openocd на Windows). Если считать ответом всё до первого
+        приглашения, ответы сдвигаются на одну команду и mdw возвращает чужое значение. Поэтому ответ
+        отсчитывается от эха команды, а текст до эха (асинхронные сообщения) отбрасывается."""
+        self.buffer = b""
         self.sock.sendall((line + "\n").encode("ascii"))
-        return self._read_until_prompt()
+        data = b""
+        while True:
+            text = self._render(self._clean(data))
+            echo = text.find(line)
+            if echo >= 0:
+                rest = text[echo + len(line):]
+                end = rest.find("\n> ")
+                if end >= 0:
+                    return rest[:end].strip("\n")
+            try:
+                chunk = self.sock.recv(4096)
+            except socket.timeout:
+                return None
+            if not chunk:
+                raise ConnectionError("OpenOCD закрыл соединение")
+            data += chunk
 
     def close(self):
         self.sock.close()
@@ -330,7 +366,9 @@ def convert(word, kind, shift=0, mask=0xFFFFFFFF):
     if kind == "uint32_seconds":
         return value // 1000
     if kind == "int32":
-        return value - (1 << 32) if value & 0x80000000 else value
+        # Поле короче слова (маска): знак берётся из старшего бита поля, а не слова.
+        width = (mask >> shift).bit_length() if mask != 0xFFFFFFFF else 32
+        return value - (1 << width) if width and value & (1 << (width - 1)) else value
     return value
 
 
@@ -514,13 +552,16 @@ def main(argv=None):
                         help="офлайн: выписать глобальные переменные прошивки из ELF в CSV для спецификации полей (плата не нужна)")
     parser.add_argument("--signals-path", default="src/",
                         help="--list-signals: фильтр по пути исходника (подстрока), по умолчанию src/")
+    parser.add_argument("--signals-depth", type=int, default=2,
+                        help="--list-signals: глубина раскрытия структур (0 — только скаляры, по умолчанию 2)")
     args = parser.parse_args(argv)
 
     if args.list_signals:
         sys.path.insert(0, str(HERE))
         import list_signals
         elf = find_elf(args.elf)
-        return list_signals.main(["--elf", str(elf), "--path", args.signals_path]
+        return list_signals.main(["--elf", str(elf), "--path", args.signals_path,
+                                  "--depth", str(args.signals_depth)]
                                  + (["--out", args.out] if args.out else []))
 
     if args.rate <= 0 or args.seconds <= 0:

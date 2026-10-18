@@ -5,7 +5,7 @@ license: MIT
 compatibility: Windows или Linux с Python 3.9+ (3.11+ или пакет tomli для resolve_addresses.py), OpenOCD 0.11+ и SWD-пробник, который он поддерживает (ST-Link, CMSIS-DAP, J-Link и др.) или Renode 1.15+ без платы, GDB с Python для адресов по ELF, SVD-файл для полей svd:; для режима rtt-timer дополнительно тулчейн arm-none-eabi (as/ld/objcopy) и Cortex-M3/M4; ROS не требуется
 metadata:
   author: Viacheslav Mezentsev
-  version: "1.4.0"
+  version: "1.5.0"
   kind: diagnostic-recorder
   outputs: mcap, rosbag-ros1
   entrypoint: scripts/record_diag.py
@@ -104,6 +104,7 @@ expr = "svd:GPIOB.ODR.ODR15"      # поле регистра из SVD: сдви
 | `expr` | выражение языка C в том виде, как его понимает GDB (`print &...`): GDB вычисляет его офлайн по отладочной информации DWARF в ELF, результат — адрес | `&var`, `&obj.field`, `&arr[3]`, `0x20000100` |
 | `expr` с `svd:` | синтаксис навыка `svd:ПЕРИФЕРИЯ.РЕГИСТР[.ПОЛЕ]`; имена — из SVD-файла производителя (формат CMSIS-SVD), считает `svd_lookup.py` | `svd:GPIOB.ODR`, `svd:ADC1.SR.EOC` |
 | `min`, `max` | числа в единицах после `kind`; значения вне диапазона отбрасываются и считаются отдельно | `min = -1000` |
+| `mask`, `shift` | поле короче слова или часть слова: значение `(слово & mask) >> shift`; у `int32` знак берётся по ширине маски | `mask = 0xFFFF` |
 
 Что не подходит для `expr`: локальные переменные функций и регистры ядра (их адрес существует только у
 работающей цели), переменные, которые компилятор убрал или держит в регистре: GDB сообщит об ошибке.
@@ -118,14 +119,19 @@ expr = "svd:GPIOB.ODR.ODR15"      # поле регистра из SVD: сдви
 счётчик платы (у зонда — `platform_tick`).
 
 **Готовый список переменных (офлайн, без платы).** Чтобы не копаться в артефактах сборки вручную,
-`--list-signals` выписывает глобальные переменные прошивки из ELF прямо в готовом для спецификации виде —
-столбцы `file, expr, type, size, kind, message, note` в CSV. По DWARF находятся глобальные переменные,
-структуры раскрываются на один уровень в скалярные поля (`&obj.field`), типы размечаются по `kind`
-(`float32`/`int32`/`uint32`; 64-битное и функции пропускаются). Фильтр по пути исходника — `--signals-path`
-(по умолчанию `src/`). Отметьте нужные строки и перенесите `expr`, `kind`, `message` в `--fields`.
+`--list-signals` выписывает глобальные переменные прошивки из ELF в CSV со столбцами
+`file, expr, type, address, size, kind, message, mask, note`. Структуры раскрываются в скалярные поля на глубину
+`--signals-depth` (0 — только скаляры, 1 — поля, 2 — поля вложенных структур; по умолчанию 2); массивы,
+объединения, битовые поля и 64-битное пропускаются, сводка в консоли называет пропущенное и причину. В CSV
+попадают только выражения, которые GDB вычисляет в адрес именно этой переменной — тем же способом, что и при
+записи, поэтому строку можно переносить без проверки: для переменных во внутреннем пространстве имён C++ и
+одноимённых `static` из разных файлов подбирается форма `&'(anonymous namespace)::имя'` или `&'файл.c'::имя`.
+`mask` задан для полей короче 32 бит: перенесите его вместе с `expr`, `kind`, `message`, иначе в значение попадут
+соседние байты. Фильтр по пути исходника — `--signals-path` (по умолчанию `src/`), CSV по умолчанию —
+`<каталог ELF>/signals.csv`.
 
 ```sh
-python scripts/record_diag.py --list-signals --elf build/app.elf --signals-path src/ --out signals.csv
+python scripts/record_diag.py --list-signals --elf build/app.elf --signals-path src/ --signals-depth 2 --out signals.csv
 ```
 
 ## 4. Без платы: Renode
@@ -226,8 +232,10 @@ python scripts/record_diag.py --backend renode --record mcap --seconds 10
 STM32F411), `record_diag.py --use-running` пишет mcap и bag через поддельный telnet OpenOCD
 (`ci/fake_openocd.py`), а файлы читаются независимыми библиотеками `mcap` и `rosbags`; `--backend renode`
 пишет mcap из настоящего Renode 1.17 с работающим зондом (счётчики растут, поле `svd:` читается). Чтение по
-SWD настоящим OpenOCD проверяется на стенде. `--list-signals` проверяется на ELF зонда: структура
-раскрывается в поля, `kind` размечается верно, фильтр по пути и отсев функций работают.
+SWD настоящим OpenOCD проверяется на стенде. `--list-signals` проверяется на ELF зонда и на тестовом ELF с
+вложенными структурами, внутренним пространством имён и одноимёнными `static`: каждая строка CSV
+разрешается `resolve_addresses.py` в тот же адрес. Kits подмешивает в telnet асинхронные сообщения
+OpenOCD и проверяет, что ответы `mdw` не сдвигаются.
 
 ## 10. Быстрее: аддитивная заглушка на таймере (--backend rtt-timer)
 
