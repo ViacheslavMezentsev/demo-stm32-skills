@@ -25,6 +25,8 @@
 - [ ] **Проверить в эмуляторе маршруты stm32-rtt-console**, которые работают через GDB: инъекция блока
       RTT и чтение буфера через GDB-сервер Renode (нужна среда с IPv6 на loopback, как у раннеров GitHub).
 
+- [ ] **Опубликовать stm32-skills-probe** на GitHub и подключить его к заданию Emulation вместо
+      `tests/firmware/boot-g474` (закреплённый коммит).
 - [ ] **Повторные исследования на стенде** по [плану](docs/research-plan.md): прошивка-зонд (R0),
       затем методика анализатора и границы эмулятора (R15, R12, R16), затем основные таблицы
       stm32-rtt-console, stm32-swo-trace, stm32-ros-alt-channel, weact-logic-analyzer.
