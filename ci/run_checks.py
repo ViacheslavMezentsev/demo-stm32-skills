@@ -364,6 +364,30 @@ def check_site():
     return "%d pages, local links and assets resolve" % len(pages)
 
 
+def validate_renode_record(values):
+    """Functional recording check; wall-clock polling throughput is not a CI contract."""
+    required = {"/probe/tick_ms", "/probe/loop_counter", "/probe/pin_frame"}
+    if len(values) != 8 or not required <= values.keys():
+        raise RuntimeError("Renode recording topics: expected 8 including %s, got %s" %
+                           (sorted(required), sorted(values)))
+    counts = {topic: len(samples) for topic, samples in values.items()}
+    if len(set(counts.values())) != 1 or min(counts.values()) < 2:
+        raise RuntimeError("Renode recording needs >=2 complete cycles; counts=%s" % counts)
+    for topic in ("/probe/tick_ms", "/probe/loop_counter"):
+        samples = values[topic]
+        if any(b < a for a, b in zip(samples, samples[1:])) or samples[-1] <= samples[0]:
+            raise RuntimeError("Renode counter must advance without going backwards: %s, count=%d, values=%s" %
+                               (topic, len(samples), samples))
+    pins = set(values["/probe/pin_frame"])
+    if pins - {0, 1}:
+        raise RuntimeError("Renode pin_frame outside {0, 1}: %s" % sorted(pins))
+
+
+def check_renode_record_validation():
+    run([sys.executable, "-B", ROOT / "ci/test_diag_renode_samples.py"], log=OUT / "diag-renode-samples.log")
+    return "slow polling accepted; incomplete, stalled, backwards and invalid samples rejected"
+
+
 def check_rtt_cleanup():
     run([sys.executable, "-B", ROOT / "ci/test_rtt_cleanup.py"], log=OUT / "rtt-cleanup.log")
     return "active ISR drain, stuck ISR, readback failure, RCC ownership"
@@ -429,6 +453,7 @@ KITS = [
     ("stm32-diag-record: rtt-timer frame parser", check_rtt_frames),
     ("stm32-diag-record: RTT recording evidence", check_rtt_record),
     ("stm32-diag-record: GDB cleanup state machine", check_rtt_cleanup),
+    ("stm32-diag-record: Renode recording assertions", check_renode_record_validation),
 ]
 
 
@@ -759,11 +784,8 @@ class Emulation(object):
         with out.open("rb") as handle:
             for _schema, channel, message in make_reader(handle).iter_messages():
                 values.setdefault(channel.topic, []).append(_struct.unpack("<I", message.data)[0])
-        ticks, loops, pins = values["/probe/tick_ms"], values["/probe/loop_counter"], set(values["/probe/pin_frame"])
-        if len(ticks) < 10 or ticks != sorted(ticks) or ticks[-1] <= ticks[0] or loops[-1] <= loops[0]:
-            raise RuntimeError("tick_ms %s, loop_counter %s" % (ticks[:6], loops[:6]))
-        if pins - {0, 1} or len(values) != 8:
-            raise RuntimeError("pin_frame %s, topics %d" % (sorted(pins), len(values)))
+        validate_renode_record(values)
+        ticks = values["/probe/tick_ms"]
         return "doctor reads memory; %d cycles from the Renode monitor; tick_ms %d -> %d" % (len(ticks), ticks[0], ticks[-1])
 
     def diag_record_rtt_timer(self):
