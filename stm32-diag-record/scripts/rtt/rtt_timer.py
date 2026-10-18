@@ -162,9 +162,14 @@ def teardown(telnet, layout, saved, args, out, gdb):
             proc = subprocess.run([gdb, "--nx", "--batch", "-ex", expression],
                                   stdout=log, stderr=subprocess.STDOUT, timeout=90)
         report = json.loads(result_path.read_text(encoding="utf-8"))
-        if proc.returncode or not report.get("ok"):
+        if proc.returncode or not report.get("ok") or not report.get("registers_restored"):
             raise RuntimeError(report.get("error", "GDB не подтвердил снятие перехвата"))
         report["ok"] = False
+        report["stage"] = "resume"
+        # detach не гарантирует resume у OpenOCD. GDB уже завершился успешно.
+        report["dhcsr_before_resume"] = mdw(telnet, 0xE000EDF0)
+        telnet.command("resume")
+        report["resume_requested"] = True
         report["stage"] = "liveness"
         nvic = layout["nvic"]
         mask = 1 << nvic["bit"]

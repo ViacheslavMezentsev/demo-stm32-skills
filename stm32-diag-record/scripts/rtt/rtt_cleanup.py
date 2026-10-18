@@ -52,7 +52,7 @@ def cleanup(target, layout, saved, report, max_steps=512):
     report["rcc"] = check(reg, restored)
     check(active, 0, mask)
     report["stage"] = "detach"
-    target.detach()  # штатное возобновление; ни reset, ни return, ни запись PC
+    target.detach()  # отключение GDB; хост явно выполнит resume после выхода процесса
     report["registers_restored"] = True
 
 

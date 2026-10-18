@@ -84,19 +84,30 @@ class CleanupTests(unittest.TestCase):
 class HostChecks(unittest.TestCase):
     def test_post_resume_stuck_tick_or_active_irq_is_failure(self):
         import rtt_timer as rt
-        for stuck, active, expected in ((False, False, True), (True, False, False), (False, True, False)):
+        for stuck, active, ignore_resume, expected in (
+                (False, False, False, True), (True, False, False, False),
+                (False, True, False, False), (False, False, True, False)):
             class Telnet:
                 tick_reads = 0
+                halted = True  # OpenOCD может оставить ядро остановленным после detach
+                commands = None
+                def __init__(self):
+                    self.commands = []
                 def command(self, text):
+                    self.commands.append(text)
+                    if text == "resume" and not ignore_resume:
+                        self.halted = False
+                    if text == "halt":
+                        self.halted = True
                     if not text.startswith("mdw"):
                         return ""
                     address = int(text.split()[1], 16)
                     if address == 6:
                         self.tick_reads += 1
-                        value = 20 if stuck else 20 + self.tick_reads
+                        value = 20 if stuck or self.halted else 20 + self.tick_reads
                     else:
                         value = {0x300: MASK if active else 0, 0x100: 0, 0x200: 0,
-                                 4: SAVED["vtor"], 0xE000EDF0: 0}.get(address, 0)
+                                 4: SAVED["vtor"], 0xE000EDF0: (1 << 17) if self.halted else 0}.get(address, 0)
                     return "0x%08x: %08x" % (address, value)
             with tempfile.TemporaryDirectory() as directory:
                 out = pathlib.Path(directory) / "record.mcap"
@@ -107,10 +118,33 @@ class HostChecks(unittest.TestCase):
                 layout = dict(LAYOUT, tick_address=6)
                 args = SimpleNamespace(host="127.0.0.1", cleanup_gdb_port=3334)
                 with patch.object(rt.subprocess, "run", side_effect=run_gdb), patch.object(rt.time, "sleep"):
-                    report = rt.teardown(Telnet(), layout, SAVED, args, out, "gdb")
+                    telnet = Telnet()
+                    report = rt.teardown(telnet, layout, SAVED, args, out, "gdb")
                 self.assertEqual(report["ok"], expected)
+                self.assertTrue(report["resume_requested"])
+                self.assertEqual(report["dhcsr_before_resume"], 1 << 17)
+                self.assertEqual(telnet.commands.count("resume"), 1)
+                self.assertEqual(telnet.halted, not expected)
                 summary = json.loads(out.with_suffix(".rtt.json").read_text())
                 self.assertEqual(summary["teardown"]["ok"], expected)
+
+    def test_failed_gdb_never_resumes(self):
+        import rtt_timer as rt
+        for code, ok, restored in ((1, False, False), (0, False, True), (0, True, False)):
+            commands = []
+            telnet = SimpleNamespace(command=lambda text: commands.append(text))
+            with tempfile.TemporaryDirectory() as directory:
+                out = pathlib.Path(directory) / "record.mcap"
+                def run_gdb(*args, **kwargs):
+                    out.with_suffix(".teardown.json").write_text(json.dumps(
+                        {"ok": ok, "registers_restored": restored}))
+                    return SimpleNamespace(returncode=code)
+                args = SimpleNamespace(host="127.0.0.1", cleanup_gdb_port=3334)
+                with patch.object(rt.subprocess, "run", side_effect=run_gdb):
+                    report = rt.teardown(telnet, LAYOUT, SAVED, args, out, "gdb")
+                self.assertFalse(report["ok"])
+                self.assertNotIn("resume", commands)
+                self.assertIn("halt", commands)
 
 
 if __name__ == "__main__":
