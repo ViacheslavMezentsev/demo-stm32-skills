@@ -72,7 +72,10 @@ def _time(seconds, nanoseconds=0):
 
 
 class BagWriter:
-    """Писатель bag v2.0 без сжатия и без зависимости от ROS."""
+    """Писатель bag v2.0 без зависимости от ROS (сжатие чанка — bz2 из stdlib, по выбору).
+
+    Сообщения копятся в памяти и пишутся одним чанком при close(): для длинных записей лучше mcap.
+    """
 
     def __init__(self, path, compression=None):
         self.path = path
@@ -92,14 +95,6 @@ class BagWriter:
         self.chunk_pos = None
         self.closed = False
 
-    def add_connection(self, topic, message, kind):
-        """Зарегистрировать топик. `kind` — как сериализовать значение."""
-        if message not in msg_types.TYPES:
-            raise ValueError("нет описания типа: %s" % message)
-        if topic not in self.connections:
-            self.connections[topic] = {"id": len(self.connections) + 1,
-                                       "message": message, "kind": kind}
-
     def add_connection(self, topic, message, kind=None, md5sum=None, definition=None):
         """Зарегистрировать топик.
 
@@ -117,7 +112,7 @@ class BagWriter:
                                        "kind": kind, "md5": md5sum, "definition": definition}
 
     def write_bytes(self, topic, payload, seconds, nanoseconds=0):
-        """Добавить сообщение с ОТОВЫМ payload (для произвольных типов и записи любых топиков)."""
+        """Добавить сообщение с ГОТОВЫМ payload (для произвольных типов и записи любых топиков)."""
         if topic not in self.connections:
             raise ValueError("топик не зарегистрирован: %s" % topic)
         self.messages.append((topic, int(seconds), int(nanoseconds), bytes(payload)))

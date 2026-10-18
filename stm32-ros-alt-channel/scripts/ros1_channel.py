@@ -552,7 +552,7 @@ def main():
         stop_all()
         return 1
 
-    listing = wsl("%s && export ROS_MASTER_URI=%s && rostopic list | grep powerboard | head -8"
+    listing = wsl("%s && export ROS_MASTER_URI=%s && rostopic list | grep -v '^/rosout' | head -8"
                   % (ROS_SETUP, ROS_MASTER_URI))
     print("\n=== 2. Топики ===")
     for line in listing.stdout.strip().splitlines():

@@ -112,7 +112,7 @@ def main():
         print("Сначала выполните resolve_addresses.py — он создаст JSON с адресами.", file=sys.stderr)
         return 1
 
-    rospy.init_node("powerboard_alt_channel", anonymous=False)
+    rospy.init_node("stm32_alt_channel", anonymous=False)
     publishers = {field["topic"]: rospy.Publisher(field["topic"], MESSAGES[field["message"]],
                                                  queue_size=10)
                   for field in spec["fields"]}

@@ -18,6 +18,9 @@ emulation  The probe firmware (stm32-skills-probe, pinned commit) is built for F
            against the device SVDs through svd_lookup of stm32-ros-alt-channel, whose
            resolve_addresses.py resolves probe symbols and a struct field from the ELF; the
            resolved RAM addresses are read twice from the running core in Renode.
+           stm32-diag-record records the probe fields through a fake OpenOCD telnet
+           (ci/fake_openocd.py) into mcap and bag files, read back by the mcap and rosbags
+           Python packages.
 
 A missing optional tool (sigrok-cli, clang-format, openocd, qemu-system-arm, GDB with Python) gives
 SKIP; with --strict it is a failure. Results: build/ci/summary.json, logs: build/ci/*.log.
@@ -234,7 +237,25 @@ def check_openocd_rtt():
         version.group(1) if version else "?")
 
 
+def check_diag_helpers():
+    sys.path.insert(0, str(ROOT / "stm32-diag-record" / "scripts"))
+    import record_diag as diag
+    words = {0x100: 0x44332211, 0x104: 0x88776655}
+    assert diag.word_at(words, 0x100) == 0x44332211 and diag.word_at(words, 0x102) == 0x66554433, "word_at"
+    assert diag.word_at(words, 0x106) is None, "word_at beyond the read words"
+    assert diag.convert(0xFFFFFFFF, "int32") == -1 and diag.convert(0x8000, "uint32", 15, 0x8000) == 1, "convert"
+    assert diag.convert(2500, "uint32_seconds") == 2 and diag.convert(0x3F800000, "float32") == 1.0, "convert"
+    assert diag.aligned_needed(0x103) == [0x100, 0x104], "unaligned field reads two words"
+    return "unaligned words, kinds, shift and mask"
+
+
+def check_shared():
+    text = run([sys.executable, "-B", ROOT / "ci" / "sync_shared.py", "--check"])
+    return text.strip().splitlines()[-1]
+
+
 KITS = [
+    ("kits: shared modules match their originals", check_shared),
     ("kits: python scripts compile", check_python),
     ("kits: shell scripts parse", check_shell),
     ("kits: JSON/JSONC files load", check_json),
@@ -244,6 +265,7 @@ KITS = [
     ("stm32-renode-emulator: renode_compat", check_renode_compat),
     ("weact-logic-analyzer: self-test", check_weact),
     ("stm32-rtt-console: OpenOCD RTT commands", check_openocd_rtt),
+    ("stm32-diag-record: conversion helpers", check_diag_helpers),
 ]
 
 
@@ -448,6 +470,75 @@ class Emulation(object):
             raise RuntimeError("counter %(A)d -> %(B)d, frames %(F)d -> %(G)d, state %(S)#x" % values)
         return "probe_counter %(A)d -> %(B)d, frames %(F)d -> %(G)d, probe_state %(S)#x" % values
 
+    def diag_record(self):
+        """stm32-diag-record end to end without a board: real resolver on the probe ELF, a fake
+        OpenOCD telnet serving changing words, files checked by independent readers (mcap, rosbags)."""
+        try:
+            from mcap.reader import make_reader
+            from rosbags.rosbag1 import Reader as BagReader
+        except ImportError:
+            raise Skip("python packages mcap and rosbags are needed to read the files back")
+        sys.path.insert(0, str(ROOT / "ci"))
+        from fake_openocd import FakeOpenOcd
+        skill = ROOT / "stm32-diag-record" / "scripts"
+        work = OUT / "diag"
+        if work.exists():
+            shutil.rmtree(work)
+        work.mkdir(parents=True)
+        env = dict(self.env, GDB=self.gdb())
+        spec = skill / "fields.toml"
+        addresses = work / "addresses.json"
+        run([sys.executable, "-B", skill / "resolve_addresses.py", "--elf", self.elves["F411CE"], "--spec", spec,
+             "--svd", self.svd_f411, "--out", addresses], log=work / "resolve.log", env=env, timeout=120)
+        fields = json.loads(addresses.read_text(encoding="utf-8"))["fields"]
+        by_topic = {field["topic"]: field for field in fields}
+        if len(fields) != 8 or by_topic["/probe/tick_ms"]["address"] != by_topic["/probe/uptime_s"]["address"]:
+            raise RuntimeError("fields with the same expr must stay separate: %s" % [f["topic"] for f in fields])
+        import struct as _struct
+        memory = {
+            by_topic["/probe/frames"]["address"]: lambda n: n + 1,
+            by_topic["/probe/tick_ms"]["address"]: lambda n: 250 * n,
+            by_topic["/probe/sine_milli"]["address"]: lambda n: (n % 21 - 10) * 100,
+            by_topic["/probe/ramp"]["address"]: lambda n: _struct.unpack("<I", _struct.pack("<f", (n % 10) / 10.0))[0],
+            by_topic["/probe/work_cycles"]["address"]: lambda n: 4000 + n,
+            by_topic["/probe/loop_counter"]["address"]: lambda n: 1000 * n,
+            by_topic["/probe/pin_frame"]["address"] & ~3: lambda n: (n % 2) << 15,
+        }
+        results = {}
+        with FakeOpenOcd(memory) as server:
+            for kind in ("mcap", "bag"):
+                out = work / ("record.%s" % kind)
+                run([sys.executable, "-B", skill / "record_diag.py", "--use-running", "--port", str(server.port),
+                     "--elf", self.elves["F411CE"], "--svd", self.svd_f411, "--record", kind, "--seconds", "1",
+                     "--rate", "20", "--out", out], log=work / ("record-%s.log" % kind), env=env, timeout=120)
+                results[kind] = out
+        values = {}
+        with results["mcap"].open("rb") as handle:
+            reader = make_reader(handle)
+            channels = {channel.topic for channel in reader.get_summary().channels.values()}
+            for _schema, channel, message in reader.iter_messages():
+                values.setdefault(channel.topic, []).append(message.data)
+        if channels != set(by_topic):
+            raise RuntimeError("mcap channels %s" % sorted(channels))
+        uint = lambda data: _struct.unpack("<I", data)[0]
+        frames = [uint(d) for d in values["/probe/frames"]]
+        ticks = [uint(d) for d in values["/probe/tick_ms"]]
+        seconds = [uint(d) for d in values["/probe/uptime_s"]]
+        ramp = [_struct.unpack("<f", d)[0] for d in values["/probe/ramp"]]
+        pins = {uint(d) for d in values["/probe/pin_frame"]}
+        if len(frames) < 10 or frames != sorted(set(frames)):
+            raise RuntimeError("frames %s" % frames[:12])
+        if seconds != [tick // 1000 for tick in ticks]:
+            raise RuntimeError("uint32_seconds does not follow the tick")
+        if not all(0.0 <= value <= 0.9 + 1e-6 for value in ramp) or pins - {0, 1}:
+            raise RuntimeError("ramp %s, pins %s" % (ramp[:5], pins))
+        with BagReader(results["bag"]) as bag:
+            bag_topics = {connection.topic for connection in bag.connections}
+            bag_messages = sum(1 for _ in bag.messages())
+        if bag_topics != set(by_topic) or bag_messages < 8 * 10:
+            raise RuntimeError("bag topics %s, messages %d" % (sorted(bag_topics), bag_messages))
+        return "8 fields (two share an address), %d cycles; mcap and bag read back by mcap and rosbags" % len(frames)
+
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__,
@@ -480,6 +571,7 @@ def main(argv=None):
             ("stm32-ros-alt-channel: resolve offline", emulation.resolve_offline),
             ("stm32-ros-alt-channel: read RAM in Renode F411CE", lambda: emulation.live("F411CE")),
             ("stm32-ros-alt-channel: read RAM in Renode F103C8", lambda: emulation.live("F103C8")),
+            ("stm32-diag-record: record via fake OpenOCD", emulation.diag_record),
         ]
         for name, function in steps:
             runner.check(name, function)

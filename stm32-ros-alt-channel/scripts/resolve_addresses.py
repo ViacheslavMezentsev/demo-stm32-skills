@@ -99,15 +99,18 @@ def resolve(elf, spec_path, svd_path, target=None):
     if not fields:
         raise ValueError("в %s нет ни одного [[field]]" % spec_path)
 
-    svd_fields = [f for f in fields if str(f.get("expr", "")).startswith("svd:")]
-    gdb_fields = [f for f in fields if f not in svd_fields]
+    # Поля различаются по номеру в спецификации, а не по выражению: два поля с одним `expr`
+    # (например, одно значение в разных топиках) остаются двумя полями.
+    svd_indices = [i for i, f in enumerate(fields) if str(f.get("expr", "")).startswith("svd:")]
+    gdb_indices = [i for i in range(len(fields)) if i not in svd_indices]
 
     resolved = {}
-    if svd_fields:
+    if svd_indices:
         if not svd_path:
             raise ValueError("поля svd: требуют SVD-файла: --svd или STM32_SVD")
         lookup = SvdLookup(svd_path)
-        for item in svd_fields:
+        for index in svd_indices:
+            item = fields[index]
             address, size_bits, shift, mask = lookup.resolve(item["expr"][4:])
             entry = {k: item[k] for k in ("topic", "message", "kind") if k in item}
             entry.update(address=address, expr=item["expr"], size_bits=size_bits)
@@ -116,9 +119,9 @@ def resolve(elf, spec_path, svd_path, target=None):
             for key in ("min", "max"):
                 if key in item:
                     entry[key] = item[key]
-            resolved[item["expr"]] = entry
+            resolved[index] = entry
 
-    if gdb_fields:
+    if gdb_indices:
         gdb = find_gdb()
         # Путь промежуточного JSON создаём заранее: скрипт для GDB должен содержать его явно
         # (заглушка с последующей заменой ненадёжна — GDB писал в файл с «пустым» путём).
@@ -126,7 +129,7 @@ def resolve(elf, spec_path, svd_path, target=None):
             intermediate = pathlib.Path(handle.name)
         with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False,
                                          encoding="utf-8") as handle:
-            handle.write(build_gdb_script(gdb_fields, elf, intermediate, target))
+            handle.write(build_gdb_script([fields[i] for i in gdb_indices], elf, intermediate, target))
             script = pathlib.Path(handle.name)
         try:
             result = subprocess.run([gdb, "-q", "-batch", str(elf), "-x", str(script)],
@@ -141,10 +144,10 @@ def resolve(elf, spec_path, svd_path, target=None):
                              % (result.stdout + result.stderr)[-800:])
         finally:
             intermediate.unlink(missing_ok=True)
-        for entry in payload["fields"]:
-            resolved[entry["expr"]] = entry
+        for index, entry in zip(gdb_indices, payload["fields"]):
+            resolved[index] = entry
 
-    ordered = [resolved[item["expr"]] for item in fields]
+    ordered = [resolved[i] for i in range(len(fields))]
     data = {"schema": 1, "elf": str(elf),
             "elf_sha256": hashlib.sha256(pathlib.Path(elf).read_bytes()).hexdigest(),
             "svd": str(svd_path) if svd_path else None, "fields": ordered}

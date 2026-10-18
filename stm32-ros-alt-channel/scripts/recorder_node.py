@@ -45,15 +45,16 @@ def main():
                         help="сообщений на чанк для mcap")
     args = parser.parse_args()
 
-    rospy.init_node("powerboard_recorder", anonymous=False)
+    rospy.init_node("stm32_recorder", anonymous=False)
 
     wanted = None if args.topics.strip().lower() == "all" else \
         {t.strip() for t in args.topics.split(",") if t.strip()}
 
     if wanted is None:
         published = rospy.client.get_published_topics()
+        # all — все топики прошивки: служебные топики ROS (/rosout, /rosout_agg) не пишутся.
         selected = {name: message_type for name, message_type in published
-                    if name.startswith("/powerboard")}
+                    if not name.startswith("/rosout")}
     else:
         published = dict(rospy.client.get_published_topics())
         selected = {name: published.get(name, "?") for name in wanted}

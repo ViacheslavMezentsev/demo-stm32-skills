@@ -7,6 +7,13 @@
 
 ### Добавлено
 
+- Навык stm32-diag-record: запись полей прошивки по SWD в mcap или bag без ROS (OpenOCD без сброса цели,
+  ключи `--target`, `--interface`, `--reset`, групповое чтение `mdw`, фактическая частота, сохранение файла
+  при Ctrl+C), пример полей для прошивки-зонда.
+- Общие модули навыков: оригинал в stm32-ros-alt-channel, копии обновляет `ci/sync_shared.py`, задание Kits
+  проверяет совпадение.
+- Emulation: stm32-diag-record пишет поля зонда через поддельный OpenOCD (`ci/fake_openocd.py`), файлы читаются
+  пакетами `mcap` и `rosbags`; Kits проверяет преобразования record_diag.py.
 - План повторных исследований навыков на стенде: `docs/research-plan.md`.
 - Прошивка-зонд для исследований вынесена в отдельный репозиторий stm32-skills-probe (платы F411CE, F401CC,
   F103C8); план исследований обновлён под эти платы.
@@ -48,7 +55,11 @@
 
 ### Исправлено
 
+- stm32-ros-alt-channel: `resolve_addresses.py` склеивал поля с одинаковым `expr` в одно; лишнее определение
+  `add_connection` в `bag_writer.py`.
 - stm32-ros-alt-channel: `resolve_addresses.py` падал без `--svd`, даже если полей `svd:` в спецификации нет.
+- stm32-ros-alt-channel: следы стенда в узлах: нейтральные имена узлов (`stm32_alt_channel`, `stm32_recorder`),
+  `all` в `recorder_node.py` выбирает все топики, кроме `/rosout*`.
 
 - stm32-renode-emulator: `run.py` искал макет и проверку лога в каталогах исходного проекта; обрезанный
   SKILL.md переписан (маршруты, прогон, проверка лога, версии Renode).

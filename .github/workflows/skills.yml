@@ -87,6 +87,9 @@ jobs:
           path: build/ci-tools
           key: ci-tools-${{ runner.os }}-${{ hashFiles('ci/tools.lock.json') }}
 
+      - name: Readers for the recorded files (independent of the skill writers)
+        run: python3 -m pip install mcap==1.5.0 rosbags==0.11.8
+
       - name: Firmware, Renode 1.17 and QEMU runs, cross-checks between skills
         run: python3 ci/run_checks.py emulation --strict
 

@@ -5,7 +5,7 @@ license: MIT
 compatibility: Windows с Python 3.8+, OpenOCD и ST-Link; WSL2 (Ubuntu) с ROS Noetic и socat; WSL в режиме mirrored networking, чтобы обращаться к службам Windows по 127.0.0.1; счётчик времени ядра WSL должен быть исправен (см. раздел про время)
 metadata:
   author: Viacheslav Mezentsev
-  version: "1.2.0"
+  version: "1.3.0"
   kind: diagnostic-channel
   transports: swd-openocd, uart-rosserial
   formats: rosbag2-ros1, mcap
@@ -146,3 +146,7 @@ scripts/host_clock.py        часы хоста для проверки вре�
 scripts/host_ref_probe.py    опора в каждом такте (WSL)
 scripts/wsl_tick.py          проверка tick ядра
 ```
+
+`resolve_addresses.py`, `svd_lookup.py`, `bag_writer.py`, `mcap_writer.py` и `msg_types.py` — оригиналы общих
+модулей: их побайтные копии лежат в навыке stm32-diag-record (запись в файл без ROS) и обновляются
+`ci/sync_shared.py` репозитория. Правки — только здесь.

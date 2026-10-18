@@ -1,0 +1,63 @@
+# Пример спецификации полей для прошивки-зонда stm32-skills-probe
+# (https://github.com/ViacheslavMezentsev/stm32-skills-probe). Для своей прошивки замените выражения.
+#
+# Каждое поле — 32-битное слово по адресу, который resolve_addresses.py вычисляет офлайн по ELF:
+#   expr = "&имя"                                        — глобальная переменная;
+#   expr = "(char*)&база + (long)&((Тип*)0)->поле"       — поле структуры (смещение по DWARF);
+#   expr = "svd:ПЕРИФЕРИЯ.РЕГИСТР[.ПОЛЕ]"                — регистр из SVD (нужен --svd).
+# kind: uint32, int32, float32 (биты IEEE-754), uint32_seconds (значение / 1000).
+# min/max (необязательно): значения вне диапазона отбрасываются и считаются отдельно.
+
+[[field]]
+topic = "/probe/frames"
+message = "std_msgs/UInt32"
+kind = "uint32"
+expr = "(char*)&probe_telemetry + (long)&((ProbeTelemetry*)0)->frames"
+
+# Счётчик платы (мс): точное время записи без доверия к часам хоста.
+[[field]]
+topic = "/probe/tick_ms"
+message = "std_msgs/UInt32"
+kind = "uint32"
+expr = "&platform_tick"
+
+[[field]]
+topic = "/probe/uptime_s"
+message = "std_msgs/UInt32"
+kind = "uint32_seconds"
+expr = "&platform_tick"
+
+[[field]]
+topic = "/probe/sine_milli"
+message = "std_msgs/Int32"
+kind = "int32"
+expr = "(char*)&probe_telemetry + (long)&((ProbeTelemetry*)0)->sine_milli"
+min = -1000
+max = 1000
+
+[[field]]
+topic = "/probe/ramp"
+message = "std_msgs/Float32"
+kind = "float32"
+expr = "(char*)&probe_telemetry + (long)&((ProbeTelemetry*)0)->ramp"
+min = 0.0
+max = 1.0
+
+[[field]]
+topic = "/probe/work_cycles"
+message = "std_msgs/UInt32"
+kind = "uint32"
+expr = "(char*)&probe_telemetry + (long)&((ProbeTelemetry*)0)->work_cycles"
+
+[[field]]
+topic = "/probe/loop_counter"
+message = "std_msgs/UInt32"
+kind = "uint32"
+expr = "&probe_counter"
+
+# Вывод «кадр» PB15 по регистру GPIOB.ODR (SVD STM32F411 или STM32F401).
+[[field]]
+topic = "/probe/pin_frame"
+message = "std_msgs/UInt32"
+kind = "uint32"
+expr = "svd:GPIOB.ODR.ODR15"

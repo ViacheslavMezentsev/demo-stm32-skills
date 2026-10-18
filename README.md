@@ -37,6 +37,7 @@
 | [stm32-rtt-console](stm32-rtt-console/) | Консоль RTT через OpenOCD и ST-Link без занятия UART |
 | [stm32-swo-trace](stm32-swo-trace/) | Трассировка SWO/ITM и профилирование по DWT |
 | [stm32-ros-alt-channel](stm32-ros-alt-channel/) | Вывод переменных и регистров в ROS1 по SWD или rosserial |
+| [stm32-diag-record](stm32-diag-record/) | Запись переменных и регистров по SWD в mcap или bag без ROS |
 | [stm32-renode-emulator](stm32-renode-emulator/) | Проверка прошивки в эмуляторе Renode без платы |
 | [weact-logic-analyzer](weact-logic-analyzer/) | Измерения логическим анализатором WeAct через sigrok-cli |
 
