@@ -141,11 +141,19 @@ def resolve(args, elf, out_dir):
 
 # ---------------------------------------------------------------- OpenOCD
 
+def isolated_process_options():
+    """Ctrl+C обрабатывает рекордер; серверы нужны до окончания восстановления."""
+    if os.name == "nt":
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
+
+
 def start_openocd(args, log_path):
     if args.use_running:
         return None
-    log = log_path.open("w", encoding="utf-8", errors="replace")
-    process = subprocess.Popen(openocd_command(args), stdout=log, stderr=subprocess.STDOUT)
+    with log_path.open("w", encoding="utf-8", errors="replace") as log:
+        process = subprocess.Popen(openocd_command(args), stdout=log, stderr=subprocess.STDOUT,
+                                   **isolated_process_options())
     deadline = time.monotonic() + 20.0
     while time.monotonic() < deadline:
         if process.poll() is not None:

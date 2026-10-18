@@ -160,7 +160,8 @@ def teardown(telnet, layout, saved, args, out, gdb):
             str(HERE), str(config_path))
         with out.with_suffix(".gdb.log").open("w", encoding="utf-8") as log:
             proc = subprocess.run([gdb, "--nx", "--batch", "-ex", expression],
-                                  stdout=log, stderr=subprocess.STDOUT, timeout=90)
+                                  stdout=log, stderr=subprocess.STDOUT, timeout=90,
+                                  **diag.isolated_process_options())
         report = json.loads(result_path.read_text(encoding="utf-8"))
         if proc.returncode or not report.get("ok") or not report.get("registers_restored"):
             raise RuntimeError(report.get("error", "GDB не подтвердил снятие перехвата"))

@@ -153,6 +153,8 @@ class HostChecks(unittest.TestCase):
                 out = pathlib.Path(directory) / "record.mcap"
                 result = out.with_suffix(".teardown.json")
                 def run_gdb(*args, **kwargs):
+                    for key, value in rt.diag.isolated_process_options().items():
+                        self.assertEqual(kwargs[key], value)
                     result.write_text(json.dumps({"ok": True, "registers_restored": True}))
                     return SimpleNamespace(returncode=0)
                 layout = dict(LAYOUT, tick_address=6)
@@ -185,6 +187,27 @@ class HostChecks(unittest.TestCase):
                 self.assertFalse(report["ok"])
                 self.assertNotIn("resume", commands)
                 self.assertIn("halt", commands)
+
+
+class ProcessIsolation(unittest.TestCase):
+    def test_openocd_isolated_on_windows_and_posix(self):
+        import record_diag as diag
+        for platform, expected in (("nt", {"creationflags": 0x200}),
+                                   ("posix", {"start_new_session": True})):
+            with tempfile.TemporaryDirectory() as directory:
+                log = pathlib.Path(directory) / "server.log"
+                args = SimpleNamespace(use_running=False, host="127.0.0.1", port=4444)
+                process = SimpleNamespace(poll=lambda: None)
+                with patch.object(diag, "os", SimpleNamespace(name=platform)), \
+                     patch.object(diag.subprocess, "CREATE_NEW_PROCESS_GROUP", 0x200, create=True), \
+                     patch.object(diag, "openocd_command", return_value=["openocd"]), \
+                     patch.object(diag.subprocess, "Popen", return_value=process) as spawn, \
+                     patch.object(diag.socket, "create_connection"):
+                    self.assertIs(diag.start_openocd(args, log), process)
+                options = spawn.call_args.kwargs
+                for name, value in expected.items():
+                    self.assertEqual(options[name], value)
+                self.assertTrue(options["stdout"].closed)
 
 
 if __name__ == "__main__":
