@@ -327,6 +327,31 @@ def check_site():
     return "%d pages, local links and assets resolve" % len(pages)
 
 
+def check_rtt_frames():
+    """Парсер кадров rtt-timer: ресинхронизация, склейка кусков, разрывы seq, kind/shift/mask."""
+    sys.path.insert(0, str(ROOT / "stm32-diag-record" / "scripts" / "rtt"))
+    import struct as _struct
+    import rtt_frames as rf
+    layout = {"frame": {"len": 8 + 4 * 3, "header": 8, "magic": 0xD1A6, "count": 3},
+              "fields": [{"topic": "/a", "message": "std_msgs/UInt32", "kind": "uint32", "byte_offset": 0},
+                         {"topic": "/b", "message": "std_msgs/Float32", "kind": "float32", "byte_offset": 0},
+                         {"topic": "/pin", "message": "std_msgs/UInt32", "kind": "uint32",
+                          "byte_offset": 0, "shift": 15, "mask": 0x8000}]}
+    reader = rf.FrameReader(layout)
+    as_bits = lambda value: _struct.unpack("<I", _struct.pack("<f", value))[0]
+    stream = (b"\x11\x22" + rf.build_frame(1, 1000, [10, as_bits(0.5), 0x8000])
+              + rf.build_frame(2, 1020, [11, as_bits(1.5), 0x0000])
+              + rf.build_frame(5, 1080, [14, as_bits(2.5), 0x8000]))   # пропущены seq 3, 4
+    frames = []
+    for i in range(0, len(stream), 7):      # куски по 7 байт: проверяем склейку границ
+        frames += reader.feed(stream[i:i + 7])
+    assert [f[0] for f in frames] == [1, 2, 5], "seq %s" % [f[0] for f in frames]
+    assert frames[0][2][0][2] == 10 and abs(frames[0][2][1][2] - 0.5) < 1e-6, "uint/float"
+    assert frames[0][2][2][2] == 1 and frames[1][2][2][2] == 0, "shift/mask"
+    assert reader.stats["seq_gaps"] == 1 and reader.stats["dropped_est"] == 2 and reader.stats["resyncs"] >= 1, reader.stats
+    return "resync, chunking, seq-gap drops (2), kinds/shift/mask"
+
+
 def check_shared():
     text = run([sys.executable, "-B", ROOT / "ci" / "sync_shared.py", "--check"])
     return text.strip().splitlines()[-1]
@@ -346,6 +371,7 @@ KITS = [
     ("stm32-rtt-console: OpenOCD RTT commands", check_openocd_rtt),
     ("stm32-diag-record: conversion helpers", check_diag_helpers),
     ("stm32-diag-record: doctor parses OpenOCD output", check_diag_doctor),
+    ("stm32-diag-record: rtt-timer frame parser", check_rtt_frames),
 ]
 
 
@@ -683,6 +709,85 @@ class Emulation(object):
             raise RuntimeError("pin_frame %s, topics %d" % (sorted(pins), len(values)))
         return "doctor reads memory; %d cycles from the Renode monitor; tick_ms %d -> %d" % (len(ticks), ticks[0], ticks[-1])
 
+    def diag_record_rtt_timer(self):
+        """rtt-timer end to end without a timer model: build the SRAM image, run the REAL compiled stub in
+        Renode by software-pending the timer IRQ through the NVIC, parse the frames it wrote to the ring."""
+        import struct as _struct
+        rtt = ROOT / "stm32-diag-record" / "scripts" / "rtt"
+        sys.path.insert(0, str(rtt))
+        import rtt_frames as rf
+        elf = self.elves["F411CE"]
+        work = OUT / "diag-rtt"
+        if work.exists():
+            shutil.rmtree(work)
+        work.mkdir(parents=True)
+        env = dict(self.env, GDB=self.gdb())
+        spec = self.probe / "tools" / "diag-fields.toml"
+        addresses = work / "addresses.json"
+        run([sys.executable, "-B", ROS_SKILL / "scripts" / "resolve_addresses.py", "--elf", elf, "--spec", spec,
+             "--out", addresses], log=work / "resolve.log", env=env, timeout=120)
+        tick = None
+        for line in run([self.gcc / "arm-none-eabi-nm", elf]).splitlines():
+            parts = line.split()
+            if len(parts) == 3 and parts[2] == "platform_tick":
+                tick = int(parts[0], 16)
+        if tick is None:
+            raise RuntimeError("platform_tick not found in the probe ELF")
+        # M0-стенд без VTOR образ собирать не должен.
+        refusal = subprocess.run([sys.executable, "-B", str(rtt / "build_rtt_image.py"), "--elf", str(elf),
+                                  "--addresses", str(addresses), "--board", "f030r8", "--toolchain", str(self.gcc),
+                                  "--sram-base", "0x20001000", "--tick-address", "0x%08X" % tick,
+                                  "--out", str(work / "no.bin")], capture_output=True, text=True)
+        if refusal.returncode == 0 or "не поддержан" not in (refusal.stdout + refusal.stderr):
+            raise RuntimeError("f030r8 (Cortex-M0) image was not refused")
+        base = 0x2001E000
+        image = work / "rtt.bin"
+        run([sys.executable, "-B", rtt / "build_rtt_image.py", "--elf", elf, "--addresses", addresses,
+             "--board", "f411ce", "--toolchain", self.gcc, "--sram-base", "0x%08X" % base,
+             "--tick-address", "0x%08X" % tick, "--rate", "1000", "--buffer", "4096", "--out", image],
+            log=work / "build.log", env=env, timeout=120)
+        layout = json.loads(image.with_suffix(".layout.json").read_text(encoding="utf-8"))
+        cb, buf, vec = layout["rtt"]["control_block"], layout["rtt"]["buffer"], layout["vectors"]["address"]
+        counters, flen, n = layout["counters"], layout["frame"]["len"], layout["frame"]["count"]
+        iser, ispr, bit = layout["nvic"]["iser"], layout["nvic"]["ispr"], layout["nvic"]["bit"]
+        pends = 8
+        lines = ["using sysbus", 'mach create "probe"',
+                 "machine LoadPlatformDescription @%s" % self.platform("F411CE").as_posix(),
+                 "sysbus LoadELF @%s" % elf.as_posix(), 'emulation RunFor "0.20"',
+                 "sysbus LoadBinary @%s 0x%08X" % (image.resolve().as_posix(), base),
+                 "sysbus WriteDoubleWord 0x%08X 0x%08X" % (layout["vtor"], vec),
+                 "sysbus WriteDoubleWord 0x%08X 0x%08X" % (iser, 1 << bit)]
+        for _ in range(pends):
+            lines += ["sysbus WriteDoubleWord 0x%08X 0x%08X" % (ispr, 1 << bit), 'emulation RunFor "0.01"']
+        lines += ['echo "WROFF="', "sysbus ReadDoubleWord 0x%08X" % (cb + 36),
+                  'echo "DROP="', "sysbus ReadDoubleWord 0x%08X" % (counters + 4)]
+        words = (pends * flen) // 4
+        for i in range(words):
+            lines += ['echo "D%03d="' % i, "sysbus ReadDoubleWord 0x%08X" % (buf + 4 * i)]
+        lines += ["quit", ""]
+        script = work / "rtt.resc"
+        script.write_text("\n".join(lines), encoding="utf-8")
+        text = run([self.renode, "--disable-gui", "--console", "--plain", "-e", "include @%s" % script.as_posix()],
+                   log=work / "renode.log", timeout=180)
+        vals = {k: int(v, 16) for k, v in re.findall(r"^([A-Z0-9]+)=\s*\n\s*(0x[0-9A-Fa-f]+)", text, re.M)}
+        if vals.get("DROP", -1) != 0 or vals.get("WROFF", -1) != pends * flen:
+            raise RuntimeError("WrOff=%s drop=%s (ожидалось %d, 0)" % (vals.get("WROFF"), vals.get("DROP"), pends * flen))
+        raw = b"".join(_struct.pack("<I", vals["D%03d" % i]) for i in range(words))
+        reader = rf.FrameReader(layout)
+        frames = reader.feed(raw)
+        if len(frames) != pends or reader.stats["dropped_est"]:
+            raise RuntimeError("кадров %d (ожидалось %d), потери %d" % (len(frames), pends, reader.stats["dropped_est"]))
+        seqs = [f[0] for f in frames]
+        ticks = [f[1] for f in frames]
+        by_topic = {topic: value for topic, _m, value, _r in frames[-1][2]}
+        if seqs != list(range(1, pends + 1)) or ticks != sorted(ticks):
+            raise RuntimeError("seq %s, ticks %s" % (seqs, ticks))
+        # Метка кадра = platform_tick; поле /probe/tick_ms читает тот же platform_tick -> должны совпасть.
+        if by_topic["/probe/tick_ms"] != ticks[-1] or by_topic["/probe/frames"] < 1:
+            raise RuntimeError("tick_ms %s vs frame tick %s" % (by_topic.get("/probe/tick_ms"), ticks[-1]))
+        return "real stub in Renode: %d frames, seq 1..%d, tick %d->%d, 0 drops; f030r8 refused" % (
+            pends, pends, ticks[0], ticks[-1])
+
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__,
@@ -717,6 +822,7 @@ def main(argv=None):
             ("stm32-ros-alt-channel: read RAM in Renode F103C8", lambda: emulation.live("F103C8")),
             ("stm32-diag-record: record via fake OpenOCD", emulation.diag_record),
             ("stm32-diag-record: record from Renode monitor", emulation.diag_record_renode),
+            ("stm32-diag-record: rtt-timer stub in Renode", emulation.diag_record_rtt_timer),
         ]
         for name, function in steps:
             runner.check(name, function)

@@ -488,9 +488,19 @@ def main(argv=None):
     parser.add_argument("--rate", type=float, default=10.0, help="частота опроса, Гц")
     parser.add_argument("--compress", choices=["none", "bz2"], default="none", help="сжатие чанка bag")
     parser.add_argument("--chunk-size", type=int, default=1000, help="сообщений на чанк mcap")
-    parser.add_argument("--backend", choices=["openocd", "renode"], default="openocd",
-                        help="откуда читать: OpenOCD (плата) или монитор Renode (эмуляция)")
+    parser.add_argument("--backend", choices=["openocd", "renode", "rtt-timer"], default="openocd",
+                        help="откуда читать: OpenOCD (плата), монитор Renode (эмуляция) или rtt-timer "
+                             "(аддитивная заглушка на свободном таймере, быстрее; меняет поведение цели)")
     parser.add_argument("--machine", default="", help="Renode: имя машины, если в мониторе их несколько")
+    # Ключи режима --backend rtt-timer (прототип, Cortex-M3/M4 стендов stm32-gdbtest).
+    parser.add_argument("--board", default="", help="rtt-timer: стенд (f411ce, f103c8, f401cc, f429zi, at32f403a)")
+    parser.add_argument("--sram-base", default="", help="rtt-timer: свободное окно SRAM (hex), напр. 0x2001E000")
+    parser.add_argument("--toolchain", default="", help="rtt-timer: каталог bin тулчейна arm-none-eabi (сборка заглушки)")
+    parser.add_argument("--buffer", type=int, default=4096, help="rtt-timer: размер кольцевого буфера, байт")
+    parser.add_argument("--timer-clock-hz", type=int, help="rtt-timer: тактовая частота таймера (иначе из boards.toml)")
+    parser.add_argument("--tick-expr", default="&platform_tick",
+                        help="rtt-timer: выражение метки времени (у зонда &platform_tick, у прошивок HAL &uwTick)")
+    parser.add_argument("--tick-address", default="", help="rtt-timer: адрес метки времени (hex) вместо --tick-expr")
     parser.add_argument("--host", default="127.0.0.1", help="адрес telnet OpenOCD или монитора Renode")
     parser.add_argument("--port", type=int, default=None, help="порт telnet: OpenOCD 4444, Renode 1234")
     parser.add_argument("--openocd", default=shutil.which("openocd") or "", help="путь к openocd")
@@ -502,9 +512,18 @@ def main(argv=None):
     if args.rate <= 0 or args.seconds <= 0:
         parser.error("--rate и --seconds должны быть положительными")
     if args.port is None:
-        args.port = DEFAULT_PORTS[args.backend]
+        args.port = DEFAULT_PORTS.get(args.backend, 4444)
     if args.backend == "renode":
         args.use_running = True  # Renode запускается отдельно: OpenOCD не нужен
+    if args.backend == "rtt-timer":
+        if not args.toolchain:
+            toolchain = os.environ.get("STM32_TOOLCHAIN_PATH", "")
+            args.toolchain = str(pathlib.Path(toolchain) / "bin") if toolchain else \
+                str(pathlib.Path(os.environ.get("GDB", "")).resolve().parent) if os.environ.get("GDB") else ""
+        if not args.doctor:
+            sys.path.insert(0, str(HERE / "rtt"))
+            import rtt_timer
+            return rtt_timer.run(args)
     if args.doctor:
         return doctor(args)
     if not args.openocd and not args.use_running:

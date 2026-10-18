@@ -39,7 +39,7 @@
 | [stm32-rtt-console](stm32-rtt-console/) | Консоль RTT через OpenOCD и ST-Link без занятия UART |
 | [stm32-swo-trace](stm32-swo-trace/) | Трассировка SWO/ITM и профилирование по DWT |
 | [stm32-ros-alt-channel](stm32-ros-alt-channel/) | Вывод переменных и регистров в ROS1 по SWD или rosserial; [как это работает](https://viacheslavmezentsev.github.io/demo-stm32-skills/skills/stm32-ros-alt-channel/) |
-| [stm32-diag-record](stm32-diag-record/) | Запись переменных и регистров по SWD или из Renode в mcap или bag без ROS (STM32 и другие Cortex-M); [как это работает](https://viacheslavmezentsev.github.io/demo-stm32-skills/skills/stm32-diag-record/) |
+| [stm32-diag-record](stm32-diag-record/) | Запись переменных и регистров по SWD, из Renode или заглушкой на таймере (RTT) в mcap или bag без ROS (STM32 и другие Cortex-M); [как это работает](https://viacheslavmezentsev.github.io/demo-stm32-skills/skills/stm32-diag-record/) |
 | [stm32-renode-emulator](stm32-renode-emulator/) | Проверка прошивки в эмуляторе Renode без платы; [как это работает](https://viacheslavmezentsev.github.io/demo-stm32-skills/skills/stm32-renode-emulator/) |
 | [weact-logic-analyzer](weact-logic-analyzer/) | Измерения логическим анализатором WeAct через sigrok-cli |
 

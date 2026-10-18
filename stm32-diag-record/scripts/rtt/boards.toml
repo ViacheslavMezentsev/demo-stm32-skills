@@ -1,0 +1,69 @@
+# Параметры стендов для режима --backend rtt-timer (аддитивная заглушка на свободном таймере).
+#
+# Заглушка одна на все платы; здесь — только то, что различается: ядро, регистр VTOR, свободный таймер и
+# его регистры, номер прерывания, регистр включения тактирования и приблизительная тактовая частота таймера
+# (точное время берётся из метки tick в каждом кадре, поэтому частота нужна лишь примерно).
+#
+# Поддержаны Cortex-M3/M4 из стендов stm32-gdbtest. Cortex-M0 (f030r8) не поддержан: у него нет VTOR,
+# перенести таблицу векторов в SRAM нельзя.
+#
+# tim_clock_hz — ориентир тактовой частоты таймера при типовой настройке стенда; переопределяется
+# ключом --timer-clock-hz. timer по умолчанию TIM2 (свободен у зонда и типовых прошивок стендов);
+# при занятом TIM2 задайте другой ключами --timer-base/--timer-irq/--timer-rcc-*.
+
+[defaults]
+vtor = 0xE000ED08
+nvic_iser_base = 0xE000E100     # ISER0; бит IRQ = irq % 32, регистр = irq // 32
+# Свободный таймер общего назначения TIM2 (одинаковая раскладка регистров у F1/F4/AT32).
+timer = "TIM2"
+timer_base = 0x40000000
+timer_irq = 28                  # TIM2 global IRQ -> исключение 16 + 28 = 44
+reg_cr1 = 0x00
+reg_dier = 0x0C
+reg_sr = 0x10
+reg_egr = 0x14
+reg_psc = 0x28
+reg_arr = 0x2C
+bit_cen = 0x0001
+bit_uie = 0x0001
+bit_ug = 0x0001
+
+[f103c8]
+core = "cortex-m3"
+mcu = "STM32F103C8"
+rcc_enable_reg = 0x4002101C     # RCC_APB1ENR (RCC @ 0x40021000 + 0x1C)
+rcc_enable_bit = 0x00000001     # TIM2EN
+tim_clock_hz = 72000000
+
+[f401cc]
+core = "cortex-m4"
+mcu = "STM32F401CC"
+rcc_enable_reg = 0x40023840     # RCC_APB1ENR
+rcc_enable_bit = 0x00000001
+tim_clock_hz = 84000000
+
+[f411ce]
+core = "cortex-m4"
+mcu = "STM32F411CE"
+rcc_enable_reg = 0x40023840
+rcc_enable_bit = 0x00000001
+tim_clock_hz = 100000000
+
+[f429zi]
+core = "cortex-m4"
+mcu = "STM32F429ZI"
+rcc_enable_reg = 0x40023840
+rcc_enable_bit = 0x00000001
+tim_clock_hz = 90000000
+
+[at32f403a]
+core = "cortex-m4"
+mcu = "AT32F403ACGU7"
+rcc_enable_reg = 0x4002101C     # CRM_APB1EN (раскладка как у F1)
+rcc_enable_bit = 0x00000001
+tim_clock_hz = 120000000
+
+[f030r8]
+core = "cortex-m0"
+mcu = "STM32F030R8"
+unsupported = "Cortex-M0 без VTOR: перенос таблицы векторов в SRAM невозможен"
