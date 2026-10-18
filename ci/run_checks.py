@@ -767,7 +767,7 @@ class Emulation(object):
         layout = json.loads(image.with_suffix(".layout.json").read_text(encoding="utf-8"))
         # Доктор (офлайн-часть): факты из ELF зонда — вершина стека, конец данных, SystemCoreClock.
         import rtt_timer
-        sp_top, ram_used, scc = rtt_timer.elf_facts(elf, self.gcc)
+        sp_top, ram_used, scc, scc_init = rtt_timer.elf_facts(elf, self.gcc)
         if sp_top != 0x20020000 or not (0x20000000 < ram_used < 0x20020000) or scc is None:
             raise RuntimeError("elf_facts: sp_top=%s ram_used=%s scc=%s" % (sp_top, ram_used, scc))
         cb, buf, vec = layout["rtt"]["control_block"], layout["rtt"]["buffer"], layout["vectors"]["address"]

@@ -38,15 +38,13 @@ RTT_SERVER_PORT = 19021
 
 
 def mdw(telnet, address):
+    """Прочитать слово по адресу через OpenOCD. Разбирает строку '0x...: значение', игнорируя
+    асинхронные сообщения и управляющие символы (telnet OpenOCD любит их подмешивать)."""
     text = telnet.command("mdw 0x%08X" % address) or ""
-    for line in text.splitlines():
-        parts = line.replace(":", "").split()
-        if len(parts) >= 2:
-            try:
-                return int(parts[1], 16)
-            except ValueError:
-                continue
-    raise RuntimeError("mdw 0x%08X не вернул значение: %r" % (address, text))
+    match = re.search(r"0x[0-9a-fA-F]+:\s*([0-9a-fA-F]{1,8})", text)
+    if match:
+        return int(match.group(1), 16)
+    raise RuntimeError("mdw 0x%08X не вернул значение: %r" % (address, text[-60:]))
 
 
 def mww(telnet, address, value):
@@ -219,7 +217,16 @@ def elf_facts(elf, toolchain):
         parts = line.split()
         if len(parts) == 3 and parts[2] == "SystemCoreClock":
             scc = int(parts[0], 16)
-    return sp_top, ram_used, scc
+    # Начальное значение SystemCoreClock из ELF (инициализатор .data) — надёжная оценка частоты без цели.
+    scc_init = None
+    if scc is not None:
+        gdb = tc / "arm-none-eabi-gdb"
+        out = subprocess.run([str(gdb), "-q", "-batch", "-ex", "print/d SystemCoreClock", str(elf)],
+                             capture_output=True, text=True).stdout
+        found = re.search(r"=\s*(\d+)", out)
+        if found:
+            scc_init = int(found.group(1))
+    return sp_top, ram_used, scc, scc_init
 
 
 def doctor(args):
@@ -237,9 +244,10 @@ def doctor(args):
     checks.append(("Python 3.9+", sys.version_info >= (3, 9), sys.version.split()[0]))
     checks.append(("ELF прошивки", elf.is_file(), str(elf)))
 
-    suggested_base = None
+    suggested_base = suggested_clock = None
+    scc = scc_init = None
     if elf.is_file():
-        sp_top, ram_used, scc = elf_facts(elf, args.toolchain)
+        sp_top, ram_used, scc, scc_init = elf_facts(elf, args.toolchain)
         ram_base, ram_end = cfg["ram_base"], cfg["ram_base"] + cfg["ram_kib"] * 1024
         # окно: над занятой RAM и ниже стека (с запасом 2 КиБ под стек)
         base = (ram_used + 0xFF) & ~0xFF if ram_used else ram_base
@@ -250,10 +258,17 @@ def doctor(args):
         checks.append(("Окно SRAM (над данными, ниже стека)", fits,
                        "--sram-base 0x%08X; данные до 0x%08X, стек с 0x%08X, образу ~%d байт"
                        % (base, ram_used, sp_top or ram_end, needed)))
-        checks.append(("SystemCoreClock в ELF", scc is not None,
-                       "0x%08X" % scc if scc else "нет символа: частоту задавайте --timer-clock-hz"))
+        # Частоту таймера оцениваем по ELF (инициализатор SystemCoreClock) — надёжно, без цели. При тактировании
+        # от PLL значение в ELF занижено; реальную частоту уточняет проверка по цели ниже.
+        if scc_init:
+            suggested_clock = scc_init
+            checks.append(("Частота таймера (из ELF)", True,
+                           "--timer-clock-hz %d (SystemCoreClock из ELF; при PLL на цели выше — см. ниже)" % scc_init))
+        else:
+            checks.append(("Частота таймера", False, "нет SystemCoreClock в ELF: задайте --timer-clock-hz вручную"))
 
-    # По цели (best-effort): реальная частота таймера и свобода TIM2.
+    # По цели (best-effort): уточнить частоту и проверить свободу TIM2. Чтение ненадёжно, если ядро стоит на
+    # сбросе (.data не скопирована) — поэтому это уточнение, а не основной источник. Ядро не трогаем (без reset).
     details = []
     telnet = process = None
     try:
@@ -262,12 +277,19 @@ def doctor(args):
                 if not args.use_running else None
             telnet = diag.Telnet(args.host, args.port)
             if elf.is_file() and scc:
-                hclk = mdw(telnet, scc)
-                cfgr = mdw(telnet, cfg["rcc_cfgr"])
-                ppre = (cfgr >> cfg["ppre1_shift"]) & 0x7
-                timer_clk, div = apb1_timer_clock(hclk, ppre)
-                checks.append(("Частота таймера (по цели)", timer_clk > 0,
-                               "--timer-clock-hz %d (SystemCoreClock %d, APB1 /%d)" % (timer_clk, hclk, div)))
+                try:
+                    hclk = mdw(telnet, scc)
+                    cfgr = mdw(telnet, cfg["rcc_cfgr"])
+                    timer_clk, div = apb1_timer_clock(hclk, (cfgr >> cfg["ppre1_shift"]) & 0x7)
+                    if 1_000_000 <= timer_clk <= 300_000_000 and hclk != scc:
+                        suggested_clock = timer_clk
+                        checks.append(("Частота таймера (по цели)", True,
+                                       "--timer-clock-hz %d (SystemCoreClock %d, APB1 /%d)" % (timer_clk, hclk, div)))
+                    else:
+                        details.append("по цели SystemCoreClock прочитался недостоверно (0x%08X): беру значение из ELF"
+                                       % hclk)
+                except (OSError, RuntimeError) as error:
+                    details.append("частоту по цели прочитать не удалось (%s): беру из ELF" % str(error).splitlines()[0][:50])
             apb1 = mdw(telnet, cfg["rcc_enable_reg"])
             cr1 = mdw(telnet, cfg["timer_base"] + cfg["reg_cr1"])
             iser = mdw(telnet, cfg["nvic_iser_base"] + 4 * (cfg["timer_irq"] // 32))
@@ -291,7 +313,8 @@ def doctor(args):
     for line in details:
         print("  " + line)
     if suggested_base is not None:
-        print("\n  запись: --sram-base 0x%08X (и --timer-clock-hz по строке выше)" % suggested_base)
+        hint = "--timer-clock-hz %d" % suggested_clock if suggested_clock else "--timer-clock-hz <из даташита>"
+        print("\n  запись: --sram-base 0x%08X %s" % (suggested_base, hint))
     print("\n  провалено: %d из %d" % (failed, len(checks)))
     return 0 if failed == 0 else 1
 
