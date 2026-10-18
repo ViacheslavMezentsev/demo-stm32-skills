@@ -747,6 +747,13 @@ class Emulation(object):
                                   "--out", str(work / "no.bin")], capture_output=True, text=True)
         if refusal.returncode == 0 or "не поддержан" not in (refusal.stdout + refusal.stderr):
             raise RuntimeError("f030r8 (Cortex-M0) image was not refused")
+        # Образ, выходящий за конец SRAM, должен отклоняться (иначе хвост ляжет в несуществующую память).
+        overflow = subprocess.run([sys.executable, "-B", str(rtt / "build_rtt_image.py"), "--elf", str(elf),
+                                   "--addresses", str(addresses), "--board", "f411ce", "--toolchain", str(self.gcc),
+                                   "--sram-base", "0x2001E000", "--buffer", "16384", "--tick-address", "0x%08X" % tick,
+                                   "--out", str(work / "big.bin")], capture_output=True, text=True)
+        if overflow.returncode == 0 or "не умещается в SRAM" not in (overflow.stdout + overflow.stderr):
+            raise RuntimeError("over-large image was not refused")
         base = 0x2001E000
         image = work / "rtt.bin"
         run([sys.executable, "-B", rtt / "build_rtt_image.py", "--elf", elf, "--addresses", addresses,
@@ -792,7 +799,7 @@ class Emulation(object):
         # Метка кадра = platform_tick; поле /probe/tick_ms читает тот же platform_tick -> должны совпасть.
         if by_topic["/probe/tick_ms"] != ticks[-1] or by_topic["/probe/frames"] < 1:
             raise RuntimeError("tick_ms %s vs frame tick %s" % (by_topic.get("/probe/tick_ms"), ticks[-1]))
-        return "real stub in Renode: %d frames, seq 1..%d, tick %d->%d, 0 drops; f030r8 refused" % (
+        return "real stub in Renode: %d frames, seq 1..%d, tick %d->%d, 0 drops; f030r8 and RAM-overflow refused" % (
             pends, pends, ticks[0], ticks[-1])
 
 

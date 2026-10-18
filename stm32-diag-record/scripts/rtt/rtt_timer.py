@@ -128,6 +128,7 @@ def read_stream(telnet, layout, args, out):
     start = telnet.command("rtt start") or ""
     if "found" not in start.lower() and "Control block" not in start:
         raise SystemExit("OpenOCD не нашёл управляющий блок RTT:\n%s" % start.strip()[-300:])
+    telnet.command("rtt polling_interval %d" % max(getattr(args, "rtt_poll_ms", 10), 1))  # чаще опрос — выше слив
     telnet.command("rtt server start %d 0" % RTT_SERVER_PORT)
     reader = FrameReader(layout)
     writer_class = diag.McapWriter if args.record == "mcap" else diag.BagWriter

@@ -160,6 +160,19 @@ def main(argv=None):
     end = cursor
     total = end - base
 
+    # Образ обязан уместиться в SRAM целиком: иначе хвост (копия таблицы векторов, заглушка) ляжет в
+    # несуществующую память, VTOR укажет туда, и первое прерывание таймера уронит прошивку в HardFault.
+    ram_base, ram_end = cfg["ram_base"], cfg["ram_base"] + cfg["ram_kib"] * 1024
+    if base < ram_base or end > ram_end:
+        overhead = total - buffer_size            # всё, кроме кольцевого буфера
+        room = ram_end - base - overhead
+        max_frames = room // frame_len
+        hint = ("--sram-base ниже (сейчас 0x%08X, до конца SRAM 0x%08X всего %d байт) или --buffer <= %d"
+                % (base, ram_end, ram_end - base, max_frames * frame_len) if max_frames >= 2
+                else "--sram-base ниже: по этому адресу места под образ нет")
+        raise SystemExit("образ (%d байт, 0x%08X..0x%08X) не умещается в SRAM %s (0x%08X..0x%08X): %s"
+                         % (total, base, end, cfg.get("mcu", board), ram_base, ram_end, hint))
+
     # Регионы в едином образе (нули по умолчанию).
     image = bytearray(total)
 

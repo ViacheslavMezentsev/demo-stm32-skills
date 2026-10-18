@@ -13,6 +13,7 @@
 
 [defaults]
 vtor = 0xE000ED08
+ram_base = 0x20000000           # начало SRAM; образ должен уместиться в [ram_base, ram_base+ram_kib*1024]
 nvic_iser_base = 0xE000E100     # ISER0; бит IRQ = irq % 32, регистр = irq // 32
 # Свободный таймер общего назначения TIM2 (одинаковая раскладка регистров у F1/F4/AT32).
 timer = "TIM2"
@@ -31,6 +32,7 @@ bit_ug = 0x0001
 [f103c8]
 core = "cortex-m3"
 mcu = "STM32F103C8"
+ram_kib = 20
 rcc_enable_reg = 0x4002101C     # RCC_APB1ENR (RCC @ 0x40021000 + 0x1C)
 rcc_enable_bit = 0x00000001     # TIM2EN
 tim_clock_hz = 72000000
@@ -38,6 +40,7 @@ tim_clock_hz = 72000000
 [f401cc]
 core = "cortex-m4"
 mcu = "STM32F401CC"
+ram_kib = 64
 rcc_enable_reg = 0x40023840     # RCC_APB1ENR
 rcc_enable_bit = 0x00000001
 tim_clock_hz = 84000000
@@ -45,6 +48,7 @@ tim_clock_hz = 84000000
 [f411ce]
 core = "cortex-m4"
 mcu = "STM32F411CE"
+ram_kib = 128
 rcc_enable_reg = 0x40023840
 rcc_enable_bit = 0x00000001
 tim_clock_hz = 100000000
@@ -52,6 +56,7 @@ tim_clock_hz = 100000000
 [f429zi]
 core = "cortex-m4"
 mcu = "STM32F429ZI"
+ram_kib = 192
 rcc_enable_reg = 0x40023840
 rcc_enable_bit = 0x00000001
 tim_clock_hz = 90000000
@@ -59,6 +64,7 @@ tim_clock_hz = 90000000
 [at32f403a]
 core = "cortex-m4"
 mcu = "AT32F403ACGU7"
+ram_kib = 96
 rcc_enable_reg = 0x4002101C     # CRM_APB1EN (раскладка как у F1)
 rcc_enable_bit = 0x00000001
 tim_clock_hz = 120000000

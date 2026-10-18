@@ -501,6 +501,8 @@ def main(argv=None):
     parser.add_argument("--tick-expr", default="&platform_tick",
                         help="rtt-timer: выражение метки времени (у зонда &platform_tick, у прошивок HAL &uwTick)")
     parser.add_argument("--tick-address", default="", help="rtt-timer: адрес метки времени (hex) вместо --tick-expr")
+    parser.add_argument("--rtt-poll-ms", type=int, default=10,
+                        help="rtt-timer: период опроса кольца RTT сервером OpenOCD, мс (меньше — выше скорость слива)")
     parser.add_argument("--host", default="127.0.0.1", help="адрес telnet OpenOCD или монитора Renode")
     parser.add_argument("--port", type=int, default=None, help="порт telnet: OpenOCD 4444, Renode 1234")
     parser.add_argument("--openocd", default=shutil.which("openocd") or "", help="путь к openocd")
