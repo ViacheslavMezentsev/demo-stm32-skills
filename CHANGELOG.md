@@ -7,6 +7,7 @@
 
 ### Добавлено
 
+- План повторных исследований навыков на стенде: `docs/research-plan.md`.
 - Kits проверяет наличие RTT-команд в OpenOCD, используемых stm32-rtt-console.
 - Задания CI Kits и Emulation (`ci/run_checks.py`, закреплённые загрузки `ci/tools.lock.json`):
   самопроверки комплектов навыков; прошивка `tests/firmware/boot-g474`, собранная тулчейн-файлом

@@ -25,6 +25,7 @@
 - [ ] **Проверить в эмуляторе маршруты stm32-rtt-console**, которые работают через GDB: инъекция блока
       RTT и чтение буфера через GDB-сервер Renode (нужна среда с IPv6 на loopback, как у раннеров GitHub).
 
-- [ ] **Проверка практических навыков на отладочных стендах.** Выполняется на типовых отладках для STM32:
-      stm32-rtt-console, stm32-swo-trace, stm32-ros-alt-channel, stm32-renode-emulator (без платы),
-      weact-logic-analyzer, stm32-cubemx-codegen.
+- [ ] **Повторные исследования на стенде** по [плану](docs/research-plan.md): прошивка-зонд (R0),
+      затем методика анализатора и границы эмулятора (R15, R12, R16), затем основные таблицы
+      stm32-rtt-console, stm32-swo-trace, stm32-ros-alt-channel, weact-logic-analyzer.
+- [ ] **Проверка stm32-cubemx-codegen** на установленном STM32CubeMX (в CI недоступен).

@@ -47,7 +47,7 @@
    compatibility (по необходимости), metadata (author, version — строками),
    allowed-tools (по необходимости). SKILL.md — до 500 строк, подробности —
    в references/. Без эмодзи.
-9. SKILL.md, README, CHANGELOG, TODO и HOWTO ведутся на русском языке.
+9. SKILL.md, README, CHANGELOG, TODO, HOWTO и документы в `docs/` ведутся на русском языке.
 10. Изменения в скриптах, работающих с оборудованием, проверяются на стенде:
     CI это не заменяет. В отчёте указывайте, что проверено на железе, а что нет.
 
