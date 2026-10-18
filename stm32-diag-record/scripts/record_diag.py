@@ -522,10 +522,9 @@ def main(argv=None):
             toolchain = os.environ.get("STM32_TOOLCHAIN_PATH", "")
             args.toolchain = str(pathlib.Path(toolchain) / "bin") if toolchain else \
                 str(pathlib.Path(os.environ.get("GDB", "")).resolve().parent) if os.environ.get("GDB") else ""
-        if not args.doctor:
-            sys.path.insert(0, str(HERE / "rtt"))
-            import rtt_timer
-            return rtt_timer.run(args)
+        sys.path.insert(0, str(HERE / "rtt"))
+        import rtt_timer
+        return rtt_timer.doctor(args) if args.doctor else rtt_timer.run(args)
     if args.doctor:
         return doctor(args)
     if not args.openocd and not args.use_running:

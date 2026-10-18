@@ -233,6 +233,7 @@ python scripts/record_diag.py --backend rtt-timer --board f411ce --sram-base 0x2
     --toolchain $STM32_TOOLCHAIN_PATH/bin --elf build/f411ce-debug/<прошивка>.elf \
     --record mcap --rate 1000 --seconds 5
 python scripts/record_diag.py --backend rtt-timer --board f411ce --sram-base 0x2001E000 --dryrun
+python scripts/record_diag.py --backend rtt-timer --board f411ce --elf app.elf --doctor
 ```
 
 | Ключ | Смысл |
@@ -252,7 +253,10 @@ python scripts/record_diag.py --backend rtt-timer --board f411ce --sram-base 0x2
 **Образ обязан уместиться в SRAM.** `--sram-base` плюс размер образа (буфер и служебные области) не должны
 выходить за конец SRAM платы (`ram_kib` в `boards.toml`), иначе сборка отклоняется: вынос заглушки за край
 памяти уронил бы прошивку в HardFault. Окно выбирают выше `.bss`/кучи и ниже стека; под большой буфер берут
-базу пониже, а не у самого конца SRAM. Границу знает карта ELF (его секции и вершина стека).
+базу пониже, а не у самого конца SRAM. Границу знает карта ELF (его секции и вершина стека). Подобрать параметры помогает `--doctor`: он по ELF
+предлагает безопасный `--sram-base` (над данными, ниже стека), а по подключённой цели читает реальную
+частоту таймера (`SystemCoreClock` и предделитель APB1) для `--timer-clock-hz` и проверяет, что таймер
+свободен.
 
 **Границы прототипа.** `f030r8` (Cortex-M0) не поддержан: нет `VTOR`. Таймер по умолчанию TIM2 — должен быть
 свободен (у зонда свободны TIM2–TIM4). Частота `--rate` приблизительная (точное время — по метке tick).

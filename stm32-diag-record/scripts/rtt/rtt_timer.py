@@ -16,11 +16,17 @@ VTOR, resume -> rtt setup/start/server -> чтение TCP :19021 -> запис�
 """
 import json
 import pathlib
+import re
 import socket
 import struct
 import subprocess
 import sys
 import time
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.9/3.10
+    import tomli as tomllib
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
@@ -165,6 +171,129 @@ def read_stream(telnet, layout, args, out):
         storage.close()
     stats = dict(reader.stats, written=written, out_of_range=out_of_range)
     return stats
+
+
+def apb1_timer_clock(hclk, ppre):
+    """Частота таймера на APB1 по SystemCoreClock (HCLK) и полю PPRE1 из RCC_CFGR.
+
+    Правило STM32: если предделитель APB равен 1, таймер тактируется PCLK; иначе — вдвое от PCLK.
+    PPRE1 < 4 означает деление на 1 (бит 2 сброшен).
+    """
+    div = 1 if ppre < 4 else (1 << ((ppre & 3) + 1))
+    return hclk if div == 1 else hclk * 2 // div, div
+
+
+def load_board(args):
+    boards = tomllib.loads((HERE / "boards.toml").read_text(encoding="utf-8"))
+    board = args.board.lower()
+    if board not in boards:
+        raise SystemExit("нет стенда %r в boards.toml (есть: %s)"
+                         % (board, ", ".join(k for k in boards if k != "defaults")))
+    cfg = dict(boards["defaults"])
+    cfg.update(boards[board])
+    return board, cfg
+
+
+def elf_facts(elf, toolchain):
+    """Из ELF: вершина стека (слово 0 таблицы векторов), конец занятой RAM, адрес SystemCoreClock."""
+    tc = pathlib.Path(toolchain)
+    sections = subprocess.run([str(tc / "arm-none-eabi-objdump"), "-h", str(elf)],
+                              capture_output=True, text=True).stdout
+    ram_used = 0
+    vec_section = None
+    for match in re.finditer(r"^\s*\d+\s+(\S+)\s+([0-9a-f]+)\s+([0-9a-f]+)\s+", sections, re.M):
+        name, size, vma = match.group(1), int(match.group(2), 16), int(match.group(3), 16)
+        if 0x20000000 <= vma < 0x20100000 and size:        # секции в SRAM (.data, .bss)
+            ram_used = max(ram_used, vma + size)
+        if 0x08000000 <= vma < 0x08100000 and size and vec_section is None:
+            vec_section = name
+    sp_top = None
+    if vec_section:
+        binary = subprocess.run([str(tc / "arm-none-eabi-objcopy"), "-O", "binary",
+                                 "--only-section=" + vec_section, str(elf), "/dev/stdout"],
+                                capture_output=True).stdout
+        if len(binary) >= 4:
+            sp_top = struct.unpack_from("<I", binary, 0)[0]
+    scc = None
+    for line in subprocess.run([str(tc / "arm-none-eabi-nm"), str(elf)], capture_output=True, text=True).stdout.splitlines():
+        parts = line.split()
+        if len(parts) == 3 and parts[2] == "SystemCoreClock":
+            scc = int(parts[0], 16)
+    return sp_top, ram_used, scc
+
+
+def doctor(args):
+    """Проверка окружения rtt-timer: окно SRAM по ELF (офлайн) и частота таймера, свобода TIM2 (по цели)."""
+    board, cfg = load_board(args)
+    print("доктор rtt-timer (%s):" % cfg.get("mcu", board))
+    if "unsupported" in cfg:
+        print("  НЕ поддержан: %s" % cfg["unsupported"])
+        return 1
+    if not args.toolchain:
+        print("  нужен --toolchain (каталог bin arm-none-eabi)")
+        return 1
+    elf = diag.find_elf(args.elf)
+    checks = []
+    checks.append(("Python 3.9+", sys.version_info >= (3, 9), sys.version.split()[0]))
+    checks.append(("ELF прошивки", elf.is_file(), str(elf)))
+
+    suggested_base = None
+    if elf.is_file():
+        sp_top, ram_used, scc = elf_facts(elf, args.toolchain)
+        ram_base, ram_end = cfg["ram_base"], cfg["ram_base"] + cfg["ram_kib"] * 1024
+        # окно: над занятой RAM и ниже стека (с запасом 2 КиБ под стек)
+        base = (ram_used + 0xFF) & ~0xFF if ram_used else ram_base
+        ceiling = (sp_top - 2048) if sp_top else ram_end
+        needed = ((args.buffer // 4) * 4) + 2048          # буфер + запас под служебные области
+        fits = base + needed <= min(ram_end, ceiling)
+        suggested_base = base
+        checks.append(("Окно SRAM (над данными, ниже стека)", fits,
+                       "--sram-base 0x%08X; данные до 0x%08X, стек с 0x%08X, образу ~%d байт"
+                       % (base, ram_used, sp_top or ram_end, needed)))
+        checks.append(("SystemCoreClock в ELF", scc is not None,
+                       "0x%08X" % scc if scc else "нет символа: частоту задавайте --timer-clock-hz"))
+
+    # По цели (best-effort): реальная частота таймера и свобода TIM2.
+    details = []
+    telnet = process = None
+    try:
+        if args.openocd or args.use_running:
+            process = diag.start_openocd(args, pathlib.Path(args.out or "rtt").with_suffix(".doctor.openocd.log")) \
+                if not args.use_running else None
+            telnet = diag.Telnet(args.host, args.port)
+            if elf.is_file() and scc:
+                hclk = mdw(telnet, scc)
+                cfgr = mdw(telnet, cfg["rcc_cfgr"])
+                ppre = (cfgr >> cfg["ppre1_shift"]) & 0x7
+                timer_clk, div = apb1_timer_clock(hclk, ppre)
+                checks.append(("Частота таймера (по цели)", timer_clk > 0,
+                               "--timer-clock-hz %d (SystemCoreClock %d, APB1 /%d)" % (timer_clk, hclk, div)))
+            apb1 = mdw(telnet, cfg["rcc_enable_reg"])
+            cr1 = mdw(telnet, cfg["timer_base"] + cfg["reg_cr1"])
+            iser = mdw(telnet, cfg["nvic_iser_base"] + 4 * (cfg["timer_irq"] // 32))
+            running = bool(cr1 & cfg["bit_cen"]) or bool(iser & (1 << (cfg["timer_irq"] % 32)))
+            checks.append(("%s свободен" % cfg["timer"], not running,
+                           "включён прошивкой (CEN/IRQ)" if running else
+                           ("тактирование уже включено" if apb1 & cfg["rcc_enable_bit"] else "свободен")))
+        else:
+            details.append("цель не опрашивалась: нет --openocd и не задан --use-running (офлайн-проверки выше)")
+    except (OSError, SystemExit, RuntimeError) as error:
+        details.append("цель недоступна (%s): проверки по цели пропущены" % str(error).splitlines()[0][:80])
+    finally:
+        if telnet:
+            telnet.close()
+        diag.stop_openocd(process)
+
+    failed = 0
+    for name, ok, detail in checks:
+        failed += 0 if ok else 1
+        print("  %-38s %-4s %s" % (name, "ок" if ok else "НЕТ", str(detail)[:84]))
+    for line in details:
+        print("  " + line)
+    if suggested_base is not None:
+        print("\n  запись: --sram-base 0x%08X (и --timer-clock-hz по строке выше)" % suggested_base)
+    print("\n  провалено: %d из %d" % (failed, len(checks)))
+    return 0 if failed == 0 else 1
 
 
 def run(args):

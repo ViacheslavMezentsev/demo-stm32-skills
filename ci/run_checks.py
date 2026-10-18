@@ -349,7 +349,11 @@ def check_rtt_frames():
     assert frames[0][2][0][2] == 10 and abs(frames[0][2][1][2] - 0.5) < 1e-6, "uint/float"
     assert frames[0][2][2][2] == 1 and frames[1][2][2][2] == 0, "shift/mask"
     assert reader.stats["seq_gaps"] == 1 and reader.stats["dropped_est"] == 2 and reader.stats["resyncs"] >= 1, reader.stats
-    return "resync, chunking, seq-gap drops (2), kinds/shift/mask"
+    import rtt_timer
+    assert rtt_timer.apb1_timer_clock(25_000_000, 0) == (25_000_000, 1), "APB1 /1"
+    assert rtt_timer.apb1_timer_clock(100_000_000, 4) == (100_000_000, 2), "APB1 /2 -> x2"
+    assert rtt_timer.apb1_timer_clock(100_000_000, 5) == (50_000_000, 4), "APB1 /4"
+    return "resync, chunking, seq-gap drops (2), kinds/shift/mask; APB1 timer-clock decode"
 
 
 def check_shared():
@@ -761,6 +765,11 @@ class Emulation(object):
              "--tick-address", "0x%08X" % tick, "--rate", "1000", "--buffer", "4096", "--out", image],
             log=work / "build.log", env=env, timeout=120)
         layout = json.loads(image.with_suffix(".layout.json").read_text(encoding="utf-8"))
+        # Доктор (офлайн-часть): факты из ELF зонда — вершина стека, конец данных, SystemCoreClock.
+        import rtt_timer
+        sp_top, ram_used, scc = rtt_timer.elf_facts(elf, self.gcc)
+        if sp_top != 0x20020000 or not (0x20000000 < ram_used < 0x20020000) or scc is None:
+            raise RuntimeError("elf_facts: sp_top=%s ram_used=%s scc=%s" % (sp_top, ram_used, scc))
         cb, buf, vec = layout["rtt"]["control_block"], layout["rtt"]["buffer"], layout["vectors"]["address"]
         counters, flen, n = layout["counters"], layout["frame"]["len"], layout["frame"]["count"]
         iser, ispr, bit = layout["nvic"]["iser"], layout["nvic"]["ispr"], layout["nvic"]["bit"]
@@ -799,8 +808,8 @@ class Emulation(object):
         # Метка кадра = platform_tick; поле /probe/tick_ms читает тот же platform_tick -> должны совпасть.
         if by_topic["/probe/tick_ms"] != ticks[-1] or by_topic["/probe/frames"] < 1:
             raise RuntimeError("tick_ms %s vs frame tick %s" % (by_topic.get("/probe/tick_ms"), ticks[-1]))
-        return "real stub in Renode: %d frames, seq 1..%d, tick %d->%d, 0 drops; f030r8 and RAM-overflow refused" % (
-            pends, pends, ticks[0], ticks[-1])
+        return ("real stub in Renode: %d frames, seq 1..%d, tick %d->%d, 0 drops; f030r8 and RAM-overflow refused; "
+                "doctor elf_facts (SP 0x%08X, SystemCoreClock)" % (pends, pends, ticks[0], ticks[-1], sp_top))
 
 
 def main(argv=None):
