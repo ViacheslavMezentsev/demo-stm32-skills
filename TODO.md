@@ -33,7 +33,7 @@
 
 - [x] **WeAct Windows: полнота записи и версия** (2026-10-19, `codex/weact-capture-validation`):
       nightly, триггеры и 1/8/16 МГц проверены на F411CE, отказы 24 МГц распознаны.
-- [ ] **WeAct: оставшаяся матрица**: аномалия rising с предысторией, 24 МГц напрямую,
+- [ ] **WeAct: оставшаяся матрица**: точный механизм аномалии rising через хаб (напрямую 24 МГц и серия триггеров прошли),
       BluePill UART, Ubuntu ARM64/SSH и инфографика; см. references/windows-validation.md навыка.
 
 - [ ] **UART Renode и Modbus RTU (R22)**: внешняя COM/TCP-программа, профиль клиента в
