@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="ru" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Как работает weact-logic-analyzer</title>
+<meta name="description" content="Автоматизированные измерения WeAct: окна, триггеры, период, импульсы, декодеры и проверенные маршруты Windows и Linux.">
+<link rel="stylesheet" href="../../assets/site.css">
+<script src="../../assets/theme.js"></script>
+<style>.cols { grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); } .node { min-width: 0; } main { overflow-wrap: anywhere; }</style>
+</head>
+<body>
+<header class="site-header">
+  <div class="inner">
+    <a class="brand" href="../../">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+        <rect x="6" y="6" width="12" height="12" rx="1.5"/><rect x="9.5" y="9.5" width="5" height="5" rx="0.5"/>
+        <path d="M9 2.5v3.5M12 2.5v3.5M15 2.5v3.5M9 18v3.5M12 18v3.5M15 18v3.5M2.5 9h3.5M2.5 12h3.5M2.5 15h3.5M18 9h3.5M18 12h3.5M18 15h3.5"/>
+      </svg>
+      <span>demo-stm32-skills</span>
+    </a>
+    <nav class="site-nav" aria-label="Разделы">
+      <a href="../../#skills">Навыки</a>
+      <a class="wide" href="https://github.com/ViacheslavMezentsev/demo-stm32-skills">Репозиторий</a>
+      <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Тема">
+        <svg class="icon-dark" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M9.6 1.1a.75.75 0 0 1 .3.9 5.5 5.5 0 0 0 4.1 7.3.75.75 0 0 1 .4 1.3A7 7 0 1 1 8.3 1a.75.75 0 0 1 1.3.1ZM7.4 2.6a5.5 5.5 0 1 0 5.4 8.6 7 7 0 0 1-5.4-8.6Z"/></svg>
+        <svg class="icon-light" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 11.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm0 1.5a5 5 0 1 1 0-10 5 5 0 0 1 0 10ZM8 0a.75.75 0 0 1 .75.75v.5a.75.75 0 0 1-1.5 0v-.5A.75.75 0 0 1 8 0Zm0 14a.75.75 0 0 1 .75.75v.5a.75.75 0 0 1-1.5 0v-.5A.75.75 0 0 1 8 14ZM0 8a.75.75 0 0 1 .75-.75h.5a.75.75 0 0 1 0 1.5h-.5A.75.75 0 0 1 0 8Zm14 0a.75.75 0 0 1 .75-.75h.5a.75.75 0 0 1 0 1.5h-.5A.75.75 0 0 1 14 8ZM2.3 2.3a.75.75 0 0 1 1.06 0l.36.36a.75.75 0 0 1-1.06 1.06l-.36-.36a.75.75 0 0 1 0-1.06Zm9.98 9.98a.75.75 0 0 1 1.06 0l.36.36a.75.75 0 0 1-1.06 1.06l-.36-.36a.75.75 0 0 1 0-1.06ZM13.7 2.3a.75.75 0 0 1 0 1.06l-.36.36a.75.75 0 1 1-1.06-1.06l.36-.36a.75.75 0 0 1 1.06 0ZM3.72 12.28a.75.75 0 0 1 0 1.06l-.36.36a.75.75 0 0 1-1.06-1.06l.36-.36a.75.75 0 0 1 1.06 0Z"/></svg>
+        <svg class="icon-auto" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0Zm0 1.5v13a6.5 6.5 0 0 0 0-13Z"/></svg>
+      </button>
+    </nav>
+  </div>
+</header>
+<main>
+<div class="breadcrumb"><a href="../../">demo-stm32-skills</a> / weact-logic-analyzer</div>
+<h1>WeAct: от сигнала к проверке</h1>
+<p class="lead">Измерения цифровых сигналов для автоматизированных тестов прошивки. Навык управляет sigrok-cli, сохраняет запись, считает интервалы и передаёт результат в проверки Python. Windows локально или Linux по SSH — анализатор подключается к машине захвата.</p>
+<div class="box">
+<h2>Путь данных</h2>
+<div class="flow">
+<div class="node"><h3>Выводы MCU</h3><p>GPIO, UART, SPI, I²C<br>Общая земля и известная разводка</p></div>
+<div class="arrow" aria-hidden="true"></div>
+<div class="node"><h3>WeAct · 8 каналов</h3><p>USB → sigrok-cli<br>Окно или триггер</p></div>
+<div class="arrow" aria-hidden="true"></div>
+<div class="node"><h3>Запись .sr</h3><p>Отсчёты → интервалы → декодеры<br>Ожидания → результат теста</p></div>
+</div></div>
+<div class="box"><h2>Выбрать режим захвата</h2><div class="cols">
+<div><h3>Фиксированное окно</h3><p>Задать длительность и частоту: N = fₛ × t. Подходит для периодических сигналов и поиска обмена в длинной записи.</p><p><strong>Проверено:</strong> 100 кГц × 5 с; 1/8/16/24 МГц × 1,2 с на PC13.</p></div>
+<div><h3>Триггер и предыстория</h3><p>Вооружить анализатор до события, дождаться фронта или спада, собрать запись. Предыстория показывает состояние до события, если успела накопиться.</p><p><strong>Проверено:</strong> rising/falling, pre=0/10/50%; тайм-аут и следующий захват.</p></div>
+</div></div>
+<div class="box"><h2>Что измерять</h2>
+<svg viewBox="0 0 760 170" role="img" aria-labelledby="timing-title" style="width:100%;height:auto;color:var(--fg)">
+<title id="timing-title">Условная диаграмма: период T, длительность высокого уровня и задержка между каналами</title>
+<g fill="none" stroke="currentColor" stroke-width="2"><path d="M70 65H130V25H290V65H450V25H610V65H720"/><path d="M70 145H170V105H330V145H490V105H650V145H720"/><path d="M130 85H450M130 78V92M450 78V92M130 15H290M130 10V20M290 10V20M130 155H170M130 150V160M170 150V160"/></g>
+<g fill="currentColor" font-size="14"><text x="10" y="45">D0</text><text x="10" y="125">D1</text><text x="192" y="13">tHIGH</text><text x="280" y="82">T</text><text x="137" y="170">Δt</text></g></svg>
+<p class="stage-note">Условная схема, не аппаратная запись. Шаг времени — 1/fₛ; абсолютная точность требует калибровки часов.</p>
+<div class="cols"><div><h3>Период, частота, импульсы</h3><p>Интервалы между фронтами, high/low, duty cycle. Для PC13 подтверждены на железе; статистика исключает импульсы, обрезанные границами файла.</p></div>
+<div><h3>Джиттер и задержка</h3><p>Распределение периодов и Δt между каналами. GPIO-маркер позволяет измерять ISR или отклик на стимул. Точные аппаратные эталоны ещё предстоит проверить.</p></div>
+<div><h3>Декодирование</h3><p>Обёртки UART, SPI, I²C проверяются синтетическими сигналами в CI. Следующий этап — реальные обмены BluePill/BlackPill с известными данными и внесёнными ошибками.</p><p><a href="https://sigrok.org/wiki/Protocol_decoders">Каталог sigrok</a>: доступность конкретного декодера проверять в установленной сборке; каталог также содержит разработки.</p></div></div></div>
+<div class="box"><h2>Три условия успешного теста</h2><ol>
+<li><strong>Полнота:</strong> число отсчётов и samplerate совпадают с запросом. Код возврата 0 сам по себе недостаточен.</li>
+<li><strong>Форма:</strong> нет неожиданных коротких импульсов, интервалы соответствуют известному сигналу. Полный ZIP не гарантирует корректной формы.</li>
+<li><strong>Смысл:</strong> ожидаемые данные и временные допуски выполнены; учтены часы MCU и анализатора, влияние остановок отладчиком.</li></ol></div>
+<div class="box"><h2>Проверено на F411CE · 19 октября 2026</h2><div class="cols">
+<div><h3>Windows · прямой USB</h3><p>CLI 0.8.0-git-f44dd91, libsigrok 0.6.0-git-883c2ac: полные записи до 24 МГц × 1,2 с, чистая серия триггеров. Старая 0.7.2 обрезала .sr на одном из путей сохранения.</p><p>Возврат на прежний хаб воспроизвёл обрыв 24 МГц и лишние переходы даже в полном файле. Точная причина внутри USB-тракта не установлена.</p></div>
+<div><h3>Ubuntu 20.04 · ARM64 · SSH</h3><p>OrangePi 5, CLI 0.7.1, libsigrok runtime 0.5.2: все 12 проверок успешны. 500000 отсчётов за 5 с; 28800000 за 1,2 с при 24 МГц.</p><p>PC13: период 1,02784 с; high 513,890 мс, low 513,952 мс. В пяти триггерных захватах лишних переходов не обнаружено.</p></div></div>
+<p>24 МГц здесь — скорость дискретизации медленного PC13. Это не подтверждение полосы входа, максимального битрейта протокола или надёжности любого хаба. Анализатор показывает цифровые уровни; форму напряжения исследуют осциллографом.</p></div>
+<div class="box"><h2>Совместные автоматизированные сценарии</h2><div class="cols">
+<div><h3>С отладчиком</h3><p>Вооружить → запустить стимул → собрать → проверить. Пошаговое выполнение и breakpoints меняют тайминги; для измеряемого участка нужен непрерывный запуск.</p></div>
+<div><h3>С stm32-diag-record</h3><p><a href="../stm32-diag-record/">Запись внутренних переменных</a> дополняет физические сигналы. Для сопоставления нужен общий GPIO-маркер: часы хоста, MCU и анализатора не синхронизируются автоматически.</p></div></div>
+<p>Дальнейшие тесты: UART, SPI/I²C, Modbus RTU, неверный CRC и тайм-ауты, задержка «команда → реакция», длительность ISR. Эти сценарии пока не представлены как подтверждённые на железе.</p></div>
+<p>Методика и доказательства: <a href="https://github.com/ViacheslavMezentsev/demo-stm32-skills/blob/main/weact-logic-analyzer/SKILL.md">навык</a> · <a href="https://github.com/ViacheslavMezentsev/demo-stm32-skills/blob/main/weact-logic-analyzer/references/windows-validation.md">Windows</a> · <a href="https://github.com/ViacheslavMezentsev/demo-stm32-skills/blob/main/weact-logic-analyzer/references/linux-validation.md">Ubuntu</a>.</p>
+</main>
+<footer class="site-footer">
+  <div class="inner">
+    <span>demo-stm32-skills · лицензия MIT</span>
+    <a href="https://github.com/ViacheslavMezentsev/demo-stm32-skills">исходники на GitHub</a>
+    <a href="https://github.com/ViacheslavMezentsev/stm32-skills-probe">прошивка-зонд stm32-skills-probe</a>
+  </div>
+</footer>
+</body>
+</html>

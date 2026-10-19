@@ -401,8 +401,8 @@ weact-logic-analyzer и stm32-renode-emulator полноту и проверяе
 | R9 | P2 | F411, WSL | не начато | — |
 | R10 | P2 | WSL | не начато | — |
 | R11 | P3 | F411, CI | не начато | — |
-| R12 | P1 | стенд, ПК | не начато | — |
-| R13 | P1 | стенд | не начато | — |
+| R12 | P1 | стенд, ПК | частично: Windows/Ubuntu, до 24 МГц × 1,2 с на PC13 | [результаты](../weact-logic-analyzer/references/linux-validation.md) |
+| R13 | P1 | стенд | проверены SSH, capture, timeout и повторное открытие | [результаты](../weact-logic-analyzer/references/linux-validation.md) |
 | R14 | P1 | F411 | не начато | — |
 | R15 | P1 | F411 | не начато | — |
 | R16 | P1 | F411CE, F103C8, CI | не начато | — |
