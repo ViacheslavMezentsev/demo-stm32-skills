@@ -209,6 +209,12 @@ def check_renode_compat():
     return "platform 1.17 <-> 1.16.1, uart path, version parsing"
 
 
+def check_weact_integrity():
+    script = ROOT / "weact-logic-analyzer" / "scripts" / "test_capture_integrity.py"
+    run([sys.executable, "-B", script], log=OUT / "weact-integrity.log", timeout=30)
+    return "complete, short rc=0, excess, wrong rate, corrupt, missing, exit error, invalid samples"
+
+
 def check_weact():
     if not shutil.which("sigrok-cli"):
         raise Skip("sigrok-cli not found")
@@ -454,6 +460,7 @@ KITS = [
     ("kits: .clang-format assets", check_clang_format),
     ("embedded-tech-spec: template and example", check_tech_spec),
     ("stm32-renode-emulator: renode_compat", check_renode_compat),
+    ("weact-logic-analyzer: capture integrity", check_weact_integrity),
     ("weact-logic-analyzer: self-test", check_weact),
     ("stm32-rtt-console: OpenOCD RTT commands", check_openocd_rtt),
     ("stm32-diag-record: conversion helpers", check_diag_helpers),

@@ -1,7 +1,7 @@
 """Проверка weact_la без железа: синтетические сигналы (-I binary) и драйвер demo."""
 import os, subprocess, sys, time, tempfile
 sys.path.insert(0, os.path.dirname(__file__))
-from weact_la import Capture, LogicAnalyzer, TriggerTimeout, parse_rate, doctor
+from weact_la import Capture, LogicAnalyzer, LAError, TriggerTimeout, parse_rate, doctor
 
 RATE = 4_000_000
 D = tempfile.mkdtemp()
@@ -106,8 +106,17 @@ def main():
     la = LogicAnalyzer("1m", driver="demo")
     cap = la.capture(os.path.join(D, "demo.sr"), duration=0.01)
     assert cap.n >= 9900 and cap.samplerate == 1e6, (cap.n, cap.samplerate)
-    cap = la.capture(os.path.join(D, "demo_t.sr"), samples=5000, trigger={0: "r"}, pretrigger=20)
-    assert cap.n > 0
+    # Some demo-driver versions stop early with a trigger. This must not pass
+    # as a successful capture merely because the exit code is zero.
+    triggered = os.path.join(D, "demo_t.sr")
+    try:
+        cap = la.capture(triggered, samples=5000, trigger={0: "r"}, pretrigger=20)
+        assert cap.n == 5000
+    except LAError as exc:
+        assert not isinstance(exc, TriggerTimeout), exc
+        cap = Capture(triggered)
+        assert 0 < cap.n < 5000 and cap.samplerate == 1e6, (cap.n, cap.samplerate)
+        print("demo trigger: incomplete capture correctly rejected")
     # demo заканчивает запись без данных, если триггер не сработал (D7 демо всегда 1)
     try:
         la.capture(os.path.join(D, "never.sr"), samples=1000, trigger={7: "f"})

@@ -421,6 +421,9 @@ class LogicAnalyzer:
             if duration is None:
                 raise ValueError("нужно duration или samples")
             samples = round(duration * self.rate)
+        if int(samples) != samples or samples <= 0:
+            raise ValueError("samples должно быть положительным целым числом")
+        self.expected_samples = int(samples)
         self.path = str(path)
         os.makedirs(os.path.dirname(os.path.abspath(self.path)), exist_ok=True)
         if os.path.exists(self.path):
@@ -437,27 +440,41 @@ class LogicAnalyzer:
         if not self.proc:
             raise LAError("сначала arm()")
         try:
-            rc = self.proc.wait(timeout)
+            _, err = self.proc.communicate(timeout=timeout)
+            rc = self.proc.returncode
         except subprocess.TimeoutExpired:
             self.abort()
             raise TriggerTimeout(f"запись не завершилась за {timeout} с (триггер не сработал?)")
-        err = self.proc.stderr.read().strip()
+        err = err.strip()
         self.proc = None
         if rc == 0 and not os.path.exists(self.path):
             raise TriggerTimeout("запись завершилась, а триггер так и не сработал (данных нет)")
         if rc != 0 or not os.path.exists(self.path):
             raise LAError(f"sigrok-cli rc={rc}: {err or 'файл не создан'}")
-        if err and "only sent" not in err:
+        try:
+            cap = Capture(self.path, self.sigrok)
+        except (OSError, ValueError, KeyError, zipfile.BadZipFile, configparser.Error) as exc:
+            raise LAError(f"повреждённая запись {self.path}: {exc}") from exc
+        if cap.n != self.expected_samples or cap.samplerate != self.rate:
+            raise LAError(
+                f"неполная или несоответствующая запись: получено {cap.n} отсчётов "
+                f"при {cap.samplerate:g} Гц, ожидалось {self.expected_samples} "
+                f"при {self.rate:g} Гц; файл сохранён: {self.path}; {err}")
+        if err:
             print(f"weact_la: {err}", file=sys.stderr)
-        return Capture(self.path, self.sigrok)
+        return cap
 
     def abort(self):
         if self.proc and self.proc.poll() is None:
-            self.proc.send_signal(signal.SIGINT)
+            if os.name == "nt":
+                self.proc.terminate()  # SIGINT не поддерживается Popen.send_signal на Windows.
+            else:
+                self.proc.send_signal(signal.SIGINT)
             try:
-                self.proc.wait(5)
+                self.proc.communicate(timeout=5)
             except subprocess.TimeoutExpired:
                 self.proc.kill()
+                self.proc.communicate()
         self.proc = None
 
     def capture(self, path, duration=None, samples=None, trigger=None, pretrigger=10, timeout=10.0, settle=0.0):
