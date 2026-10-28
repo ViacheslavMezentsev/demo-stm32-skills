@@ -1,11 +1,11 @@
 ---
 name: stm32-gdbpy-scenario
-description: 'Запуск простого сценария или короткой последовательности действий на STM32 (и других Cortex-M) через GDB с Python (gdb-py) без специальных фреймворков: маршрут Renode, локальный ST-Link с OpenOCD или удалённый стенд через SSH-туннель, подготовительные проверки (GDB с Python, отпечаток пробника и МК, работающее ядро, таймауты), шаблон сценария с check/reach/write и восстановлением, запускатель с бюджетом времени и уборкой своих процессов, итог PASS/FAIL/ERROR/TIMEOUT в JSON; команды цели без GDB (состояние, стоп, старт, сброс, чтение адреса одной строкой через SSH, копия и возврат Flash). Использовать, когда нужно дойти до функции, прочитать или временно изменить переменную, проверить реакцию прошивки и оставить плату в прежнем состоянии; когда сценарий зависает, GDB не выполняет Python или результат проверяется по управляющему сигналу вместо наблюдаемого.'
+description: 'Запуск простого сценария или короткой последовательности действий на STM32 (и других Cortex-M) через GDB с Python (gdb-py) без специальных фреймворков: маршрут Renode, ST-Link или J-Link через OpenOCD, J-Link GDB Server, локально или на удалённом стенде через SSH-туннель, подготовительные проверки (GDB с Python, отпечаток пробника и МК, работающее ядро, таймауты), шаблон сценария с check/reach/write и восстановлением, запускатель с бюджетом времени и уборкой своих процессов, итог PASS/FAIL/ERROR/TIMEOUT в JSON; команды цели без GDB (состояние, стоп, старт, сброс, чтение адреса одной строкой через SSH, копия и возврат Flash). Использовать, когда нужно дойти до функции, прочитать или временно изменить переменную, проверить реакцию прошивки и оставить плату в прежнем состоянии; когда сценарий зависает, GDB не выполняет Python или результат проверяется по управляющему сигналу вместо наблюдаемого.'
 license: MIT
-compatibility: Python 3.9+, GDB с Python (arm-none-eabi-gdb-py3 из xPack/Arm GNU Toolchain или gdb-multiarch), для эмуляции Renode 1.17, для платы OpenOCD 0.11+ и ST-Link (SWD), для удалённого стенда SSH-клиент. Windows и Linux.
+compatibility: Python 3.9+, GDB с Python (arm-none-eabi-gdb-py3 из xPack/Arm GNU Toolchain или gdb-multiarch), для эмуляции Renode 1.17, для платы OpenOCD 0.11+ с ST-Link или J-Link (SWD) либо SEGGER J-Link Software, для удалённого стенда SSH-клиент. Windows и Linux.
 metadata:
   author: Viacheslav Mezentsev
-  version: "1.1.0"
+  version: "1.2.0"
   entrypoint: scripts/run_scenario.py
   related: stm32-renode-emulator stm32-diag-record stm32-ros-alt-channel
 allowed-tools: Bash Read Write Edit Glob Grep
@@ -27,7 +27,8 @@ Python на хосте; посторонние пакеты не требуют�
 
 ```
 scripts/run_scenario.py        запускатель: сервер (локально или на узле по SSH), GDB, бюджет, run.json, уборка
-scripts/ocd.py                 команды без GDB: state, read, halt, resume, reset-run, reset-halt, raw
+scripts/ocd.py                 команды без GDB через OpenOCD: state, read, halt, resume, reset-run, reset-halt, raw
+scripts/jlink.py               те же команды через SEGGER J-Link Commander (JLinkExe)
 assets/scenario_template.py    шаблон сценария: check/reach/read/write/monitor/record, восстановление
 assets/probe_scenario.py       пример для прошивки-зонда stm32-skills-probe (Renode и платы)
 assets/address_scenario.py     пример без ELF: DEV_ID, остановка, сброс на вектор, stepi
@@ -41,6 +42,7 @@ references/pitfalls.md         провалы с симптомами, прич�
 | :--- | :--- | :--- |
 | `emulator` | платы нет или нужен воспроизводимый прогон | `--renode-platform <модель.repl>`: Renode с GDB-сервером на свободном порту |
 | `local` | ST-Link в USB этой машины | `--openocd-config interface/stlink.cfg --openocd-config target/<серия>.cfg` |
+| `jlink` | J-Link, сервер SEGGER | `--jlink-device <имя МК в базе SEGGER> --adapter-serial <номер J-Link>` (локально или с `--ssh`) |
 | `remote` | пробник на узле стенда, доступ по SSH | `--ssh user@host --openocd <путь на узле> --openocd-config ...`: OpenOCD на узле и туннель поднимает запускатель |
 
 PASS в эмуляторе подтверждает только поведение в модели; аппаратная проверка — отдельный
@@ -244,6 +246,43 @@ ssh user@stand "openocd -f interface/stlink.cfg -c 'adapter serial <серийн
   туннель и `--tcl` ~0,4 с, локально 0,1 с;
 - копия Flash (`flash read_bank`), прошивка и возврат образа с проверкой хеша — `raw`.
 
+### 4.3 J-Link: отличия от ST-Link
+
+| Что | J-Link GDB Server | OpenOCD + `interface/jlink.cfg` | ST-Link + OpenOCD |
+| :--- | :--- | :--- | :--- |
+| Выбор пробника | `-USB <десятичный номер>` | `adapter serial <номер>` | `adapter serial <серийник>` |
+| Транспорт | `-if SWD` | **`transport select swd`** (иначе JTAG) | выбирает сам (hla) |
+| МК | `-device <имя SEGGER>` | конфиг цели | конфиг цели |
+| Сброс с остановкой | `monitor reset` | `monitor reset halt` | `monitor reset halt` |
+| После подключения | `monitor flash breakpoints = 0` | — | — |
+| Выход из сценария | `monitor go`, `disconnect` | `continue &`, `detach` | `continue &`, `detach` |
+
+Запускатель передаёт сценарию команду сброса, подготовку и выход сервера через
+`SCENARIO_RESET_HALT`, `SCENARIO_SETUP` и `SCENARIO_FINISH`; шаблон их применяет.
+`monitor flash breakpoints = 0` обязателен: иначе J-Link GDB Server ставит программные точки
+останова записью во Flash. Те же приёмы использует модуль stm32-gdbtest (backend `jlink`).
+
+```sh
+# J-Link GDB Server на узле
+python scripts/run_scenario.py --scenario assets/address_scenario.py --jlink-device AT32F403ACGU7 \
+    --jlink-gdbserver /opt/SEGGER/JLink/JLinkGDBServerCLExe --adapter-serial <номер> \
+    --ssh user@stand --out build/scenario/jlink
+# J-Link через OpenOCD (AT32: драйвер Flash at32f4x не опознал AT32F403A — карта памяти отключена)
+python scripts/run_scenario.py --scenario assets/address_scenario.py --openocd-config interface/jlink.cfg \
+    --openocd-transport swd --openocd-set CPUTAPID=0x2ba01477 --openocd-config target/artery/at32f4x.cfg \
+    --openocd-command "gdb_memory_map disable" --openocd-command "gdb_breakpoint_override hard" \
+    --adapter-serial <номер> --ssh user@stand --openocd '<openocd на узле>' --out build/scenario/ocd-jlink
+# команды без GDB
+python scripts/jlink.py --ssh user@stand --jlinkexe /opt/SEGGER/JLink/JLinkExe --device AT32F403ACGU7 \
+    --serial <номер> state read 0xE0042000 halt state resume
+python scripts/ocd.py --ssh user@stand --openocd '<openocd на узле>' --interface interface/jlink.cfg \
+    --transport swd --serial <номер> --set CPUTAPID=0x2ba01477 --target artery/at32f4x state
+```
+
+J-Link Commander при выходе отпускает ядро: `halt` действует только внутри одного вызова
+`jlink.py`, а `resume` для работающего ядра отвечает «already running». У OpenOCD, наоборот,
+`halt` сохраняется после выхода.
+
 ## 5. Действия, которые не завершаются сами
 
 | Действие | Почему висит | Ограничение |
@@ -307,7 +346,7 @@ cmake -S stm32-skills-probe -B build/probe -G Ninja -DBOARD=F411CE -DARM_TOOLCHA
 cmake --build build/probe        # для Renode добавить -DPROBE_LOG_SEMIHOSTING=ON -DPROBE_EXIT_MS=500
 ```
 
-Проверено 28.10.2026 (OpenOCD 0.12, `arm-none-eabi-gdb-py3` 15.2):
+Проверено 28.10.2026 (OpenOCD 0.12, SEGGER J-Link 9.80, `arm-none-eabi-gdb-py3` 15.2):
 
 | Стенд | Маршрут | Команды и чтение | Сценарий по адресам | Зонд: Flash → сценарий → возврат |
 | :--- | :--- | :--- | :--- | :--- |
@@ -317,6 +356,7 @@ cmake --build build/probe        # для Renode добавить -DPROBE_LOG_SE
 | Blue Pill F103C8 | узел по SSH | PASS | PASS | PASS, хеш образа совпал |
 | Nucleo F030R8 | узел по SSH | PASS | PASS | — (зонд не поддерживает) |
 | F429ZI, ST-Link V2 | узел по SSH, USB-адрес | PASS | PASS | — (зонд не поддерживает) |
+| AT32F403A, J-Link | узел по SSH: JLinkExe и OpenOCD | PASS | PASS (J-Link GDB Server и OpenOCD) | — (зонд не поддерживает) |
 
 В CI репозитория пример зонда и четыре варианта шаблона (PASS, FAIL, ERROR с возвратом
 переменной, TIMEOUT с последним шагом) выполняются в Renode. Однажды на трёх удалённых платах

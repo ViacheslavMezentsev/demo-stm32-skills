@@ -147,25 +147,60 @@ def backend(args, out):
         log.close()
         wait_ready(process, out / "server.log", "GDB server")
         return process, "127.0.0.1", port, args.environment or "emulator", "renode " + Path(args.renode_platform).name
+    executable, argv, marker, reset, label = server_spec(args)
     if args.ssh:
-        return remote_openocd(args, out, port)
-    openocd = find_tool(args.openocd, "OPENOCD", ("openocd",))
-    process, log = start([openocd] + openocd_args(args, port), out / "server.log")
-    log.close()
-    wait_ready(process, out / "server.log", "for gdb connections")
-    return process, "127.0.0.1", port, args.environment or "hardware", "openocd " + " ".join(args.openocd_config)
+        server, host, port = remote_server(args, out, port, executable, argv, marker)
+    else:
+        command = [find_server(args, executable)] + [part.replace("{PORT}", str(port)) for part in argv]
+        server, log = start(command, out / "server.log")
+        log.close()
+        wait_ready(server, out / "server.log", marker)
+        host = "127.0.0.1"
+    args.reset_halt = reset
+    return server, host, port, args.environment or "hardware", label
+
+
+def server_spec(args):
+    """(исполняемый файл, аргументы с {PORT}, строка готовности, команда сброса с остановкой, описание)."""
+    if args.jlink_device:
+        argv = ["-device", args.jlink_device, "-if", args.jlink_interface, "-speed", str(args.jlink_speed),
+                "-port", "{PORT}", "-swoport", "0", "-telnetport", "0", "-RTTTelnetPort", "0",
+                "-localhostonly", "1", "-nogui", "-strict", "-timeout", "5000", "-noir", "-noreset", "-nohalt",
+                "-nosinglerun"]
+        argv += ["-USB", args.adapter_serial] if args.adapter_serial else []
+        # monitor reset у J-Link GDB Server сбрасывает и оставляет ядро остановленным.
+        # Как в stm32-gdbtest: только аппаратные точки (иначе сервер пишет точки во Flash), выход — go и disconnect.
+        args.server_setup, args.server_finish = "monitor flash breakpoints = 0", "monitor go|disconnect"
+        return args.jlink_gdbserver, argv, "Waiting for GDB connection", "reset", "jlink " + args.jlink_device
+    argv = openocd_args(args, None) + ["-c", "gdb_port {PORT}"]
+    return args.openocd, argv, "for gdb connections", "reset halt", "openocd " + " ".join(args.openocd_config)
+
+
+def find_server(args, executable):
+    if args.jlink_device:
+        return find_tool(executable, "JLINK_GDBSERVER", ("JLinkGDBServerCLExe", "JLinkGDBServerCL"),
+                         "SEGGER/JLink/JLinkGDBServerCL.exe")
+    return find_tool(executable, "OPENOCD", ("openocd",))
 
 
 def openocd_args(args, port):
     """Интерфейс, выбор пробника, цель; сервер только на 127.0.0.1, без telnet и Tcl."""
     configs = list(args.openocd_config)
     command = ["-f", configs.pop(0)]
+    if args.openocd_transport:
+        # J-Link и CMSIS-DAP по умолчанию идут по JTAG; ST-Link (hla) транспорт не выбирает.
+        command += ["-c", "transport select " + args.openocd_transport]
+    for item in args.openocd_set:
+        name, _, value = item.partition("=")
+        command += ["-c", "set %s %s" % (name, value)]
     if args.adapter_serial:
         command += ["-c", "adapter serial " + args.adapter_serial]
     if args.adapter_usb_location:
         command += ["-c", "adapter usb location " + args.adapter_usb_location]
     for config in configs:
         command += ["-f", config]
+    for item in args.openocd_command:
+        command += ["-c", item]
     command += ["-c", "bindto 127.0.0.1", "-c", "telnet_port disabled", "-c", "tcl_port disabled"]
     return command + (["-c", "gdb_port %d" % port] if port else [])
 
@@ -201,35 +236,37 @@ class Remote(object):
             self.pid = None
 
 
-def remote_openocd(args, out, local_port):
+def remote_server(args, out, local_port, executable, argv, marker):
     remote = Remote(args, out)
-    openocd = args.openocd or "openocd"
-    # Свободный порт на узле выбирает сам узел; nohup — чтобы сервер пережил выход из SSH.
-    server = " ".join([remote_path(openocd)] + [shlex.quote(part) for part in openocd_args(args, None)])
+    default = "/opt/SEGGER/JLink/JLinkGDBServerCLExe" if args.jlink_device else "openocd"
+    # Аргумент с {PORT} подставляется оболочкой узла; остальные экранируются как есть.
+    parts = ['"%s"' % part.replace("{PORT}", "$p") if "{PORT}" in part else shlex.quote(part) for part in argv]
+    server = " ".join([remote_path(executable or default)] + parts)
+    # Свободный порт выбирает сам узел; nohup — чтобы сервер пережил выход из SSH.
     script = ("p=$(python3 -c 'import socket;s=socket.socket();s.bind((\"127.0.0.1\",0));print(s.getsockname()[1])' "
-              "2>/dev/null || echo $((30000 + $$ % 20000))); log=/tmp/gdbpy-ocd-$$.log; "
-              "nohup " + server + " -c \"gdb_port $p\" > $log 2>&1 < /dev/null & pid=$!; "
-              "for i in $(seq 100); do grep -q 'for gdb connections' $log && break; "
+              "2>/dev/null || echo $((30000 + $$ % 20000))); log=/tmp/gdbpy-server-$$.log; "
+              "nohup " + server + " > $log 2>&1 < /dev/null & pid=$!; "
+              "for i in $(seq 150); do grep -q " + shlex.quote(marker) + " $log && break; "
               "kill -0 $pid 2>/dev/null || break; sleep 0.1; done; echo PID=$pid PORT=$p LOG=$log; "
-              "grep -q 'for gdb connections' $log && echo READY || cat $log")
+              "grep -q " + shlex.quote(marker) + " $log && echo READY || cat $log")
     answer = remote.ssh(script, timeout=40).stdout
     match = re.search(r"PID=(\d+) PORT=(\d+) LOG=(\S+)", answer)
     if match:
         remote.pid, remote.log = int(match.group(1)), match.group(3)
     if not match or "READY" not in answer:
         remote.stop()
-        raise RuntimeError("OpenOCD на узле не стал готов: " + answer.strip()[-400:])
+        raise RuntimeError("GDB-сервер на узле не стал готов: " + answer.strip()[-400:])
     command = ["ssh", "-N", "-o", "BatchMode=yes", "-o", "ExitOnForwardFailure=yes", "-o", "ConnectTimeout=10",
                "-L", "%d:127.0.0.1:%s" % (local_port, match.group(2))]
     command += (["-i", args.ssh_key] if args.ssh_key else []) + [args.ssh]
     remote.tunnel, log = start(command, out / "tunnel.log")
     log.close()
-    # Туннель проверяется живым процессом, а не пробным подключением: оно заняло бы GDB-порт OpenOCD.
+    # Туннель проверяется живым процессом, а не пробным подключением: оно заняло бы GDB-порт сервера.
     time.sleep(2)
     if remote.tunnel.poll() is not None:
         remote.stop()
         raise RuntimeError("SSH-туннель не поднялся: " + (out / "tunnel.log").read_text(errors="replace")[-300:])
-    return remote, "127.0.0.1", local_port, args.environment or "hardware", "ssh %s openocd" % args.ssh
+    return remote, "127.0.0.1", local_port
 
 
 def run(args):
@@ -247,7 +284,10 @@ def run(args):
         server, host, port, environment, described = backend(args, out)
         summary.update(environment=environment, backend=described)
         env = dict(os.environ, SCENARIO_GDB_HOST=host, SCENARIO_GDB_PORT=str(port),
-                   SCENARIO_RESULT=str(out / "scenario.json"), SCENARIO_ENVIRONMENT=environment)
+                   SCENARIO_RESULT=str(out / "scenario.json"), SCENARIO_ENVIRONMENT=environment,
+                   SCENARIO_RESET_HALT=getattr(args, "reset_halt", None) or args.reset_command or "reset halt",
+                   SCENARIO_SETUP=getattr(args, "server_setup", ""),
+                   SCENARIO_FINISH=getattr(args, "server_finish", "continue &|detach"))
         # Список аргументов без оболочки: путь с пробелом не разваливает -ex "source ...".
         # Без ELF GDB работает по адресам: символов нет, сценарий читает память и регистры.
         command = [gdb, "-nx", "-batch"] + ([str(args.elf)] if args.elf else [])
@@ -301,10 +341,20 @@ def main():
     route.add_argument("--renode-platform", type=Path, help="модель .repl: Renode с GDB-сервером")
     route.add_argument("--openocd-config", action="append", default=[], help="конфиг OpenOCD (повторяемый)")
     route.add_argument("--attach", help="host:port готового GDB-сервера или туннеля")
+    route.add_argument("--jlink-device", help="имя МК для J-Link GDB Server (например, STM32F103C8, AT32F403ACGU7)")
     parser.add_argument("--renode", help="исполняемый файл Renode")
     parser.add_argument("--renode-line", action="append", default=[], help="строка монитора Renode до LoadELF")
     parser.add_argument("--openocd", help="исполняемый файл OpenOCD")
-    parser.add_argument("--adapter-serial", help="серийный номер пробника для OpenOCD")
+    parser.add_argument("--adapter-serial", help="серийный номер пробника (OpenOCD; для J-Link — номер J-Link)")
+    parser.add_argument("--openocd-command", action="append", default=[],
+                        help="команда OpenOCD после конфигов цели, например \"gdb_memory_map disable\"")
+    parser.add_argument("--openocd-transport", choices=("swd", "jtag"), help="transport select (J-Link, CMSIS-DAP)")
+    parser.add_argument("--openocd-set", action="append", default=[], metavar="NAME=VALUE",
+                        help="переменная Tcl до конфигов цели, например CPUTAPID=0x2ba01477")
+    parser.add_argument("--jlink-gdbserver", help="JLinkGDBServerCL(Exe); на узле — путь на узле")
+    parser.add_argument("--jlink-interface", default="SWD", choices=("SWD", "JTAG"))
+    parser.add_argument("--jlink-speed", type=int, default=1000, help="частота SWD, кГц")
+    parser.add_argument("--reset-command", help="команда monitor для сброса с остановкой при --attach")
     parser.add_argument("--adapter-usb-location", help="адрес USB пробника <bus>-<port[.port]> вместо серийника")
     parser.add_argument("--ssh", help="user@host: OpenOCD на узле стенда и SSH-туннель к нему")
     parser.add_argument("--ssh-key", help="ключ SSH для --ssh")
@@ -315,12 +365,12 @@ def main():
         return 0
     if not (args.scenario and args.out):
         parser.error("нужны --scenario и --out")
-    if not (args.renode_platform or args.openocd_config or args.attach):
-        parser.error("выберите маршрут: --renode-platform, --openocd-config или --attach")
+    if not (args.renode_platform or args.openocd_config or args.attach or args.jlink_device):
+        parser.error("выберите маршрут: --renode-platform, --openocd-config, --jlink-device или --attach")
     if args.renode_platform and not args.elf:
         parser.error("для Renode нужен --elf")
-    if args.ssh and not args.openocd_config:
-        parser.error("--ssh работает вместе с --openocd-config")
+    if args.ssh and not (args.openocd_config or args.jlink_device):
+        parser.error("--ssh работает вместе с --openocd-config или --jlink-device")
     if (args.elf and not args.elf.is_file()) or not args.scenario.is_file():
         parser.error("нет файла ELF или сценария")
     return run(args)

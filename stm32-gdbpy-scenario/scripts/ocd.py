@@ -9,6 +9,8 @@ Tcl-порт. Чтение памяти не останавливает ядро
   python ocd.py --ssh user@stand --target stm32f1x --serial <серийник> halt state
   python ocd.py --ssh user@stand --target stm32f4x --usb-location 7-1.1.3 reset-halt state resume
   python ocd.py --tcl 127.0.0.1:6666 read 0x20000000 4          # работающий OpenOCD
+  python ocd.py --interface interface/jlink.cfg --serial <номер J-Link> --set CPUTAPID=0x2ba01477 \
+      --target artery/at32f4x state                             # J-Link через OpenOCD, AT32F403A
 
 Действия (выполняются по порядку в одном сеансе):
   state               DHCSR: RUNNING, HALTED, SLEEPING, LOCKUP
@@ -128,10 +130,15 @@ def remote_path(path):
 
 def oneshot(args, actions):
     command = [args.openocd, "-f", args.interface]
+    if args.transport:
+        command += ["-c", "transport select " + args.transport]
     if args.serial:
         command += ["-c", "adapter serial " + args.serial]
     if args.usb_location:
         command += ["-c", "adapter usb location " + args.usb_location]
+    for item in args.set:
+        name, _, value = item.partition("=")
+        command += ["-c", "set %s %s" % (name, value)]
     target = args.target if args.target.endswith(".cfg") else "target/%s.cfg" % args.target
     command += ["-f", target, "-c", "init"]
     for item in commands(actions, True):
@@ -168,7 +175,10 @@ def tcl(args, actions):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--target", help="target/<имя>.cfg OpenOCD или путь к .cfg (для одноразового сеанса)")
-    parser.add_argument("--interface", default="interface/stlink.cfg")
+    parser.add_argument("--interface", default="interface/stlink.cfg", help="interface/stlink.cfg, interface/jlink.cfg, ...")
+    parser.add_argument("--transport", choices=("swd", "jtag"), help="transport select: нужен J-Link и CMSIS-DAP")
+    parser.add_argument("--set", action="append", default=[], metavar="NAME=VALUE",
+                        help="переменная Tcl до конфига цели, например CPUTAPID=0x2ba01477 для AT32")
     parser.add_argument("--serial", help="серийный номер пробника")
     parser.add_argument("--usb-location", help="адрес USB пробника <bus>-<port[.port]> (если серийник нечитаем)")
     parser.add_argument("--openocd", default="openocd", help="OpenOCD (на узле — путь на узле)")

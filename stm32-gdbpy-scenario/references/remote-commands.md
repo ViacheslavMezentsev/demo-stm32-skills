@@ -2,7 +2,8 @@
 
 Проверено 28.10.2026 на шести стендах: BlackPill F411CE локально (Windows, OpenOCD 0.12.0)
 и на узле Orange Pi 5 по SSH (xPack OpenOCD 0.12.0+dev) — F411CE, F401CC, F103C8, F030R8
-(Nucleo, ST-Link V2-1) и F429ZI (ST-Link V2 с нечитаемым серийником, выбор по USB-адресу).
+(Nucleo, ST-Link V2-1) и F429ZI (ST-Link V2 с нечитаемым серийником, выбор по USB-адресу), а также AT32F403A через
+J-Link (SEGGER J-Link 9.80 и OpenOCD с `interface/jlink.cfg`).
 
 ## 1. Одноразовый сеанс OpenOCD
 
@@ -101,7 +102,33 @@ python scripts/ocd.py ... raw "flash read_bank 0 /tmp/check.bin"            # с
 После прошивки готовность проверяется переменной прошивки (например, `probe_state = 0xA5`),
 а не паузой. Копия — файл с серийным номером стенда в имени не коммитится.
 
-## 5. Ловушки
+## 5. J-Link
+
+```sh
+# чтение одной строкой через SEGGER Commander (подключение ядро не останавливает)
+ssh user@stand "f=\$(mktemp); printf 'mem32 E0042000, 1\nq\n' > \$f; /opt/SEGGER/JLink/JLinkExe -USB <номер> \
+  -device AT32F403ACGU7 -if SWD -speed 1000 -autoconnect 1 -NoGui 1 -CommandFile \$f | grep ' = '; rm -f \$f"
+# E0042000 = 70050347
+```
+
+| Команда | JLinkExe | OpenOCD + J-Link |
+| :--- | :--- | :--- |
+| чтение | `mem32 ADDR, N` (0,8 с по SSH) | `mdw ADDR N` (0,7 с) |
+| стоп | `h` — **отпускается при выходе Commander** | `halt` — сохраняется после выхода |
+| старт | `g`; для работающего ядра `CPU is not halted` | `halt` + `resume` |
+| сброс с остановкой | `r` | `reset halt` |
+| сброс и запуск | `r`, затем `g` | `reset run` |
+
+- Номер J-Link — десятичный USB-номер (в sysfs с ведущими нулями; `-USB` и `adapter serial`
+  принимают его без нулей).
+- OpenOCD с J-Link без `transport select swd` выбирает JTAG: `JTAG scan chain interrogation failed`.
+- AT32F403A: DPIDR `0x2ba01477` (Cortex-M4), а `target/artery/at32f4x.cfg` ждёт `0x1ba01477` —
+  `set CPUTAPID 0x2ba01477` до конфига. Драйвер Flash `at32f4x` этой сборки не опознаёт МК
+  (`Cannot identify target as an Artery device`), и OpenOCD отклоняет GDB при построении карты
+  памяти: `gdb_memory_map disable` и `gdb_breakpoint_override hard`. Прошивка Flash через этот
+  драйвер не проверялась; для неё — J-Link.
+
+## 6. Ловушки
 
 - **Windows: `couldn't bind tcl to socket`**. Фиксированный порт попал в диапазон,
   зарезервированный системой (Hyper-V, `netsh int ipv4 show excludedportrange protocol=tcp`).

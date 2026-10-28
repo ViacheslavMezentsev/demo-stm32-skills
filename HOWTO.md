@@ -36,6 +36,8 @@ openocd qemu-system-arm ninja-build gdb-multiarch`. Загрузки (`ci/fetch_
 | Renode: `GDB server ... started`, но порт недоступен | В окружении нет IPv6 на loopback (часть песочниц и контейнеров). Чтение памяти в CI идёт через монитор Renode, а проверки stm32-gdbpy-scenario используют GDB-сервер: в таком окружении они не пройдут, запускайте их на другой машине |
 | OpenOCD на Windows: `couldn't bind tcl to socket` | Порт попал в диапазон, зарезервированный Windows (`netsh int ipv4 show excludedportrange protocol=tcp`); взять другой или выданный системой порт |
 | OpenOCD: `resume` в новом сеансе даёт `not halted ... context restore failed` | Сразу после `init` цель ещё не опрошена: `-c halt -c resume` или `wait_halt 100` перед `resume` (stm32-gdbpy-scenario, `ocd.py resume`) |
+| OpenOCD + J-Link: `JTAG scan chain interrogation failed` | J-Link по умолчанию идёт по JTAG: `-c "transport select swd"` после `interface/jlink.cfg` |
+| OpenOCD + AT32: `Cannot identify target as an Artery device`, GDB отклонён | `gdb_memory_map disable` и `gdb_breakpoint_override hard`; для AT32F403A ещё `set CPUTAPID 0x2ba01477` до `target/artery/at32f4x.cfg` |
 | stm32-gdbpy-scenario: `GDB с Python не найден` | Установить `gdb-multiarch` или указать `arm-none-eabi-gdb-py3` через `GDB`; обычный `arm-none-eabi-gdb` из xPack собран без Python |
 | Прогон QEMU заканчивается таймаутом | Прошивка не вызывает семихостинг `SYS_EXIT`: QEMU сам не останавливается (у зонда — сборка с `-DPROBE_EXIT_MS`) |
 | `upload-pack: not our ref <хеш>` при загрузке зонда | Закреплённый коммит ещё не отправлен на GitHub: отправить ветку зонда или проверять с `--probe` |

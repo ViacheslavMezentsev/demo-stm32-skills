@@ -474,6 +474,32 @@ def check_gdbpy_ocd():
     return "actions, one-shot/server resume, report and DHCSR decode"
 
 
+def check_gdbpy_jlink():
+    """jlink.py: группы команд JLinkExe и разбор ответа Commander без пробника."""
+    sys.path.insert(0, str(GDBPY_SKILL / "scripts"))
+    import jlink
+    actions = jlink.parse_actions(["state", "read", "0x20000000", "2", "resume", "reset-run", "raw", "regs"])
+    sent = jlink.commands(actions)
+    if sent != ["sleep 0", "mem32 E000EDF0, 1", "sleep 0", "mem32 20000000, 2", "sleep 0", "g", "sleep 0", "r", "g",
+                "sleep 0", "regs", "sleep 0", "q"]:
+        raise RuntimeError("commands: %s" % sent)
+    text = ("Cortex-M4 identified.\nJ-Link>sleep 0\nJ-Link>mem32 E000EDF0, 1\nE000EDF0 = 01050001 \n"
+            "J-Link>sleep 0\nJ-Link>mem32 20000000, 2\n20000000 = 000000A5 00000011 \nJ-Link>sleep 0\nJ-Link>g\n"
+            "****** Error: CPU is not halted\nJ-Link>sleep 0\nJ-Link>r\nJ-Link>g\nJ-Link>sleep 0\nJ-Link>regs\n"
+            "PC = 080000F4, CycleCnt = 00000000\nJ-Link>sleep 0\nJ-Link>q\n")
+    import contextlib
+    import io
+    stream = io.StringIO()
+    with contextlib.redirect_stdout(stream):
+        jlink.report(actions, text)
+    lines = stream.getvalue().splitlines()
+    expected = ["state SLEEPING (DHCSR 0x01050001)", "0x20000000 0x000000A5", "0x20000004 0x00000011",
+                "resume ok (already running)", "reset-run ok", "PC = 080000F4, CycleCnt = 00000000"]
+    if lines != expected:
+        raise RuntimeError("report: %s" % lines)
+    return "command groups, mem32 parsing, resume of a running core"
+
+
 def check_shared():
     text = run([sys.executable, "-B", ROOT / "ci" / "sync_shared.py", "--check"])
     return text.strip().splitlines()[-1]
@@ -490,6 +516,7 @@ KITS = [
     ("kits: .clang-format assets", check_clang_format),
     ("embedded-tech-spec: template and example", check_tech_spec),
     ("stm32-gdbpy-scenario: ocd.py parsing", check_gdbpy_ocd),
+    ("stm32-gdbpy-scenario: jlink.py parsing", check_gdbpy_jlink),
     ("stm32-renode-emulator: renode_compat", check_renode_compat),
     ("weact-logic-analyzer: capture integrity", check_weact_integrity),
     ("weact-logic-analyzer: self-test", check_weact),

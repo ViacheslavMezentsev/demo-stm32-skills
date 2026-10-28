@@ -5,6 +5,13 @@
 
 ## [Unreleased]
 
+- stm32-gdbpy-scenario 1.2.0: J-Link — маршрут J-Link GDB Server (`--jlink-device`, локально и по SSH),
+  OpenOCD с `interface/jlink.cfg` (`--openocd-transport`, `--openocd-set`, `--openocd-command`), `jlink.py`
+  для команд через JLinkExe; сброс, подготовка и выход сервера передаются сценарию, как в stm32-gdbtest
+  (`monitor reset`, `monitor flash breakpoints = 0`, `monitor go`/`disconnect`). AT32F403A на узле по SSH:
+  чтение, стоп, старт и сбросы через JLinkExe и OpenOCD, сценарий по адресам через оба сервера — 14/14;
+  регрессия ST-Link (BlackPill F411CE с циклом зонда, F030R8) и Renode повторена.
+
 - stm32-gdbpy-scenario 1.1.0: `ocd.py` — состояние, чтение, стоп, старт, сброс и `raw` через одноразовый
   сеанс OpenOCD (локально или на узле по SSH) или Tcl-порт работающего сервера; запускатель поднимает
   OpenOCD на узле и туннель сам (`--ssh`), выбирает ST-Link по USB-адресу, работает без ELF; сценарий

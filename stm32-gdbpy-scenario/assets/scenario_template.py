@@ -41,7 +41,7 @@ def write(expr, value):
 
 
 def monitor(command):
-    # Команда GDB-сервера (OpenOCD: reset halt, reset run); после неё кэш регистров GDB устарел.
+    # Команда GDB-сервера (monitor); после неё кэш регистров GDB устарел.
     text = gdb.execute("monitor " + command, to_string=True)
     gdb.execute("maintenance flush register-cache")
     return text
@@ -65,6 +65,8 @@ def restore():
 
 
 environment = os.environ.get("SCENARIO_ENVIRONMENT", "hardware")
+# Сброс с остановкой на языке сервера: OpenOCD — reset halt, J-Link GDB Server — reset.
+reset_halt = os.environ.get("SCENARIO_RESET_HALT", "reset halt")
 status, restored = "ERROR", None
 try:
     gdb.execute("set pagination off")
@@ -72,11 +74,14 @@ try:
     gdb.execute("set remotetimeout 15")
     gdb.execute("target remote %s:%s" % (os.environ.get("SCENARIO_GDB_HOST", "127.0.0.1"),
                                          os.environ["SCENARIO_GDB_PORT"]))
+    # Подготовка сервера от запускателя (J-Link: monitor flash breakpoints = 0 — только аппаратные точки).
+    for command in filter(None, os.environ.get("SCENARIO_SETUP", "").split("|")):
+        gdb.execute(command)
 
     # ---------------------------------------------------------------- Сценарий
     if environment == "hardware":
         # На плате GDB подключается к работающей прошивке: main уже пройден, начинаем со сброса.
-        monitor("reset halt")
+        monitor(reset_halt)
     step("main")
     check("main reached", reach("main"))
     # Пример: исходное состояние, действие, наблюдаемый результат, соседний признак.
@@ -105,8 +110,9 @@ finally:
     if environment == "hardware":
         try:
             # Плату оставляем работающей: detach при остановленном ядре оставит её в halt.
-            gdb.execute("continue &")
-            gdb.execute("detach")
+            # OpenOCD: continue & и detach; J-Link GDB Server: monitor go и disconnect.
+            for command in os.environ.get("SCENARIO_FINISH", "continue &|detach").split("|"):
+                gdb.execute(command)
         except Exception:
             traceback.print_exc()
     gdb.execute("quit " + ("0" if status == "PASS" else "1"))
