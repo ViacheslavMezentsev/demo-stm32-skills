@@ -49,6 +49,7 @@ PROBE_MODEL_TO_SVD = {"usart1": "USART1", "tim1": "TIM1", "gpioa": "GPIOA", "gpi
                       "rcc": "RCC", "flash_ctrl": "FLASH"}
 RENODE_SKILL = ROOT / "stm32-renode-emulator"
 ROS_SKILL = ROOT / "stm32-ros-alt-channel"
+GDBPY_SKILL = ROOT / "stm32-gdbpy-scenario"
 
 # Renode mock peripherals and their SVD names (dwt is a core block, not in the device SVD).
 MOCK_TO_SVD = {
@@ -674,6 +675,59 @@ class Emulation(object):
             raise RuntimeError("counter %(A)d -> %(B)d, frames %(F)d -> %(G)d, state %(S)#x" % values)
         return "probe_counter %(A)d -> %(B)d, frames %(F)d -> %(G)d, probe_state %(S)#x" % values
 
+    def gdbpy_run(self, name, scenario, timeout=60):
+        """run_scenario.py навыка stm32-gdbpy-scenario: Renode с GDB-сервером, зонд F411CE."""
+        out = OUT / ("gdbpy-%s" % name)
+        if out.exists():
+            shutil.rmtree(out)
+        proc = subprocess.run([sys.executable, "-B", str(GDBPY_SKILL / "scripts" / "run_scenario.py"),
+                               "--elf", str(self.elves["F411CE"]), "--scenario", str(scenario),
+                               "--renode-platform", str(self.platform("F411CE")), "--renode", str(self.renode),
+                               "--gdb", self.gdb(), "--out", str(out), "--timeout", str(timeout)],
+                              capture_output=True, text=True, timeout=timeout + 90, env=self.env)
+        (OUT / ("gdbpy-%s.log" % name)).write_text(proc.stdout + proc.stderr, encoding="utf-8")
+        if not (out / "run.json").is_file():
+            raise RuntimeError("no run.json (exit %d): %s" % (proc.returncode, (proc.stdout + proc.stderr)[-300:]))
+        return proc.returncode, json.loads((out / "run.json").read_text(encoding="utf-8"))
+
+    def gdbpy_probe(self):
+        code, result = self.gdbpy_run("probe", GDBPY_SKILL / "assets" / "probe_scenario.py")
+        if code != 0 or result["status"] != "PASS" or result.get("restored") is not True:
+            raise RuntimeError("exit %d, status %s, restored %s, checks %s"
+                               % (code, result["status"], result.get("restored"), result["checks"]))
+        ticks = [item["data"] for item in result["records"]]
+        return "%d checks PASS, frame ticks %s, period restored" % (len(result["checks"]), ticks)
+
+    def gdbpy_outcomes(self):
+        """Шаблон как есть и три его варианта: итог и код возврата различают FAIL, ERROR и TIMEOUT."""
+        template = (GDBPY_SKILL / "assets" / "scenario_template.py").read_text(encoding="utf-8")
+        section = re.compile(r"(    # -{10,} Сценарий\n).*?(    # -{20,}\n)", re.S)
+        bodies = {"template": None,
+                  "fail": '    check("main reached", reach("main"))\n'
+                          '    check("deliberate failure", read("probe_state") == 0x5A)\n',
+                  "error": '    check("main reached", reach("main"))\n'
+                           '    write("probe_frame_period_ms", 7)\n    raise RuntimeError("deliberate error")\n',
+                  "timeout": '    step("stuck in scenario")\n    __import__("time").sleep(120)\n'}
+        expected = {"template": (0, "PASS"), "fail": (1, "FAIL"), "error": (2, "ERROR"), "timeout": (2, "TIMEOUT")}
+        folder = OUT / "gdbpy-variants"
+        folder.mkdir(parents=True, exist_ok=True)
+        seen = []
+        for name, body in bodies.items():
+            text = template if body is None else section.sub(lambda m: m.group(1) + body + m.group(2), template)
+            if body is not None and body not in text:
+                raise RuntimeError("scenario section not found in the template")
+            path = folder / ("%s.py" % name)
+            path.write_text(text, encoding="utf-8")
+            code, result = self.gdbpy_run(name, path, timeout=15 if name == "timeout" else 60)
+            if (code, result["status"]) != expected[name]:
+                raise RuntimeError("%s: exit %d, status %s" % (name, code, result["status"]))
+            if name == "error" and result.get("restored") is not True:
+                raise RuntimeError("written variable not restored after an exception")
+            if name == "timeout" and result.get("last_step") != "stuck in scenario":
+                raise RuntimeError("timeout without the last step: %s" % result.get("last_step"))
+            seen.append("%s=%s" % (name, result["status"]))
+        return ", ".join(seen) + "; restoration after ERROR verified"
+
     def diag_record(self):
         """stm32-diag-record end to end without a board: real resolver on the probe ELF, a fake
         OpenOCD telnet serving changing words, files checked by independent readers (mcap, rosbags)."""
@@ -1039,6 +1093,8 @@ def main(argv=None):
             ("stm32-diag-record: record from Renode monitor", emulation.diag_record_renode),
             ("stm32-diag-record: rtt-timer stub in Renode", emulation.diag_record_rtt_timer),
             ("stm32-diag-record: --list-signals from ELF", emulation.list_signals),
+            ("stm32-gdbpy-scenario: probe scenario in Renode F411CE", emulation.gdbpy_probe),
+            ("stm32-gdbpy-scenario: PASS/FAIL/ERROR/TIMEOUT outcomes", emulation.gdbpy_outcomes),
         ]
         for name, function in steps:
             runner.check(name, function)

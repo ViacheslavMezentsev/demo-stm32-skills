@@ -41,6 +41,7 @@
 | [stm32-ros-alt-channel](stm32-ros-alt-channel/) | Вывод переменных и регистров в ROS1 по SWD или rosserial; [как это работает](https://viacheslavmezentsev.github.io/demo-stm32-skills/skills/stm32-ros-alt-channel/) |
 | [stm32-diag-record](stm32-diag-record/) | Запись переменных и регистров по SWD, из Renode или заглушкой на таймере (RTT) в mcap или bag без ROS (STM32 и другие Cortex-M); [как это работает](https://viacheslavmezentsev.github.io/demo-stm32-skills/skills/stm32-diag-record/) |
 | [stm32-renode-emulator](stm32-renode-emulator/) | Проверка прошивки в эмуляторе Renode без платы; [как это работает](https://viacheslavmezentsev.github.io/demo-stm32-skills/skills/stm32-renode-emulator/) |
+| [stm32-gdbpy-scenario](stm32-gdbpy-scenario/) | Простой сценарий через GDB с Python: маршрут, подготовка, проверка наблюдаемого, восстановление и итог PASS/FAIL/ERROR/TIMEOUT |
 | [weact-logic-analyzer](weact-logic-analyzer/) | Измерения логическим анализатором WeAct через sigrok-cli |
 
 ### Документация и процесс
@@ -101,7 +102,8 @@ CI (workflow Skills) проверяет не только формат навы�
   собирается для BlackPill F411CE и F401CC и Blue Pill F103C8 (F411CE — тулчейн-файлом
   stm32-vscode-cmake-scaffold) и запускается в Renode 1.17 и QEMU навыком stm32-renode-emulator с проверкой
   стартового лога; модели платформ сверяются с SVD, а stm32-ros-alt-channel находит адреса переменных и полей
-  структуры зонда и читает их из работающего эмулятора. Та же прошивка используется в исследованиях на стенде.
+  структуры зонда и читает их из работающего эмулятора, а stm32-gdbpy-scenario выполняет пример сценария gdb-py
+  и варианты шаблона с итогами PASS, FAIL, ERROR и TIMEOUT. Та же прошивка используется в исследованиях на стенде.
 
 Навыки проверяют друг друга, но только в эмуляторе: аппаратную проверку на стенде это не заменяет.
 Локальный запуск — `python3 ci/run_checks.py kits emulation` ([HOWTO](HOWTO.md)).
