@@ -34,6 +34,8 @@ openocd qemu-system-arm ninja-build gdb-multiarch`. Загрузки (`ci/fetch_
 | --- | --- |
 | `SHA-256 mismatch` при загрузке | Файл повреждён или подменён: он уже удалён, повторить запуск; если повторяется — сверить `url` и `sha256` в `ci/tools.lock.json` |
 | Renode: `GDB server ... started`, но порт недоступен | В окружении нет IPv6 на loopback (часть песочниц и контейнеров). Чтение памяти в CI идёт через монитор Renode, а проверки stm32-gdbpy-scenario используют GDB-сервер: в таком окружении они не пройдут, запускайте их на другой машине |
+| OpenOCD на Windows: `couldn't bind tcl to socket` | Порт попал в диапазон, зарезервированный Windows (`netsh int ipv4 show excludedportrange protocol=tcp`); взять другой или выданный системой порт |
+| OpenOCD: `resume` в новом сеансе даёт `not halted ... context restore failed` | Сразу после `init` цель ещё не опрошена: `-c halt -c resume` или `wait_halt 100` перед `resume` (stm32-gdbpy-scenario, `ocd.py resume`) |
 | stm32-gdbpy-scenario: `GDB с Python не найден` | Установить `gdb-multiarch` или указать `arm-none-eabi-gdb-py3` через `GDB`; обычный `arm-none-eabi-gdb` из xPack собран без Python |
 | Прогон QEMU заканчивается таймаутом | Прошивка не вызывает семихостинг `SYS_EXIT`: QEMU сам не останавливается (у зонда — сборка с `-DPROBE_EXIT_MS`) |
 | `upload-pack: not our ref <хеш>` при загрузке зонда | Закреплённый коммит ещё не отправлен на GitHub: отправить ветку зонда или проверять с `--probe` |

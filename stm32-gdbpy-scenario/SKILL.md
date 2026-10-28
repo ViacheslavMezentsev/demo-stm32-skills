@@ -1,11 +1,11 @@
 ---
 name: stm32-gdbpy-scenario
-description: 'Запуск простого сценария или короткой последовательности действий на STM32 (и других Cortex-M) через GDB с Python (gdb-py) без специальных фреймворков: маршрут Renode, локальный ST-Link с OpenOCD или удалённый стенд через SSH-туннель, подготовительные проверки (GDB с Python, отпечаток пробника и МК, работающее ядро, таймауты), шаблон сценария с check/reach/write и восстановлением, запускатель с бюджетом времени и уборкой своих процессов, итог PASS/FAIL/ERROR/TIMEOUT в JSON. Использовать, когда нужно дойти до функции, прочитать или временно изменить переменную, проверить реакцию прошивки и оставить плату в прежнем состоянии; когда сценарий зависает, GDB не выполняет Python или результат проверяется по управляющему сигналу вместо наблюдаемого.'
+description: 'Запуск простого сценария или короткой последовательности действий на STM32 (и других Cortex-M) через GDB с Python (gdb-py) без специальных фреймворков: маршрут Renode, локальный ST-Link с OpenOCD или удалённый стенд через SSH-туннель, подготовительные проверки (GDB с Python, отпечаток пробника и МК, работающее ядро, таймауты), шаблон сценария с check/reach/write и восстановлением, запускатель с бюджетом времени и уборкой своих процессов, итог PASS/FAIL/ERROR/TIMEOUT в JSON; команды цели без GDB (состояние, стоп, старт, сброс, чтение адреса одной строкой через SSH, копия и возврат Flash). Использовать, когда нужно дойти до функции, прочитать или временно изменить переменную, проверить реакцию прошивки и оставить плату в прежнем состоянии; когда сценарий зависает, GDB не выполняет Python или результат проверяется по управляющему сигналу вместо наблюдаемого.'
 license: MIT
 compatibility: Python 3.9+, GDB с Python (arm-none-eabi-gdb-py3 из xPack/Arm GNU Toolchain или gdb-multiarch), для эмуляции Renode 1.17, для платы OpenOCD 0.11+ и ST-Link (SWD), для удалённого стенда SSH-клиент. Windows и Linux.
 metadata:
   author: Viacheslav Mezentsev
-  version: "1.0.0"
+  version: "1.1.0"
   entrypoint: scripts/run_scenario.py
   related: stm32-renode-emulator stm32-diag-record stm32-ros-alt-channel
 allowed-tools: Bash Read Write Edit Glob Grep
@@ -26,9 +26,12 @@ Python на хосте; посторонние пакеты не требуют�
 Состав навыка:
 
 ```
-scripts/run_scenario.py        запускатель: сервер, GDB, бюджет времени, run.json, уборка
-assets/scenario_template.py    шаблон сценария: check/reach/read/write/record, восстановление
-assets/probe_scenario.py       рабочий пример для прошивки-зонда stm32-skills-probe
+scripts/run_scenario.py        запускатель: сервер (локально или на узле по SSH), GDB, бюджет, run.json, уборка
+scripts/ocd.py                 команды без GDB: state, read, halt, resume, reset-run, reset-halt, raw
+assets/scenario_template.py    шаблон сценария: check/reach/read/write/monitor/record, восстановление
+assets/probe_scenario.py       пример для прошивки-зонда stm32-skills-probe (Renode и платы)
+assets/address_scenario.py     пример без ELF: DEV_ID, остановка, сброс на вектор, stepi
+references/remote-commands.md  стоп, старт, сброс, чтение одной строкой, Tcl-порт, копия Flash
 references/pitfalls.md         провалы с симптомами, причинами и правильными приёмами
 ```
 
@@ -38,7 +41,7 @@ references/pitfalls.md         провалы с симптомами, прич�
 | :--- | :--- | :--- |
 | `emulator` | платы нет или нужен воспроизводимый прогон | `--renode-platform <модель.repl>`: Renode с GDB-сервером на свободном порту |
 | `local` | ST-Link в USB этой машины | `--openocd-config interface/stlink.cfg --openocd-config target/<серия>.cfg` |
-| `remote` | пробник на узле стенда, доступ по SSH | OpenOCD на узле, SSH-туннель к его GDB-порту, `--attach 127.0.0.1:<порт>` |
+| `remote` | пробник на узле стенда, доступ по SSH | `--ssh user@host --openocd <путь на узле> --openocd-config ...`: OpenOCD на узле и туннель поднимает запускатель |
 
 PASS в эмуляторе подтверждает только поведение в модели; аппаратная проверка — отдельный
 прогон на плате. Запускатель пишет окружение (`emulator`/`hardware`) в итог, а сценарий
@@ -55,7 +58,8 @@ for d in /sys/bus/usb/devices/*; do [ -f "$d/idVendor" ] && [ "$(cat $d/idVendor
   echo "$(cat $d/serial) $(cat $d/product)"; done
 ```
 
-Если пробников несколько, серийник передаётся явно: `--adapter-serial <серийник>`.
+Если пробников несколько, серийник передаётся явно: `--adapter-serial <серийник>`. ST-Link V2 со
+старой прошивкой отдаёт нечитаемый серийник — тогда `--adapter-usb-location <bus>-<port>`.
 Серийные номера и адреса стендов не коммитятся: они живут в локальных файлах стенда.
 
 ### 1.2 Тип МК
@@ -127,6 +131,7 @@ arm-none-eabi-gdb-py3 -nx -batch build/app.elf -ex "p &uwTick" -ex "ptype g_app"
 | `reach(symbol, condition=None)` | временная точка останова, `continue`, проверка кадра |
 | `read(expr)` | целое значение выражения C в текущем кадре |
 | `write(expr, value)` | `set var`; исходное значение запоминается один раз |
+| `monitor(command)` | команда GDB-сервера (`reset halt`) и сброс кэша регистров GDB |
 | `record(name, data)` | наблюдение в итог (сырые числа, а не только вердикт) |
 | `restore()` | возврат записанного и проверка чтением; вызывается в `finally` |
 
@@ -150,6 +155,9 @@ arm-none-eabi-gdb-py3 -nx -batch build/app.elf -ex "p &uwTick" -ex "ptype g_app"
 - Запись в переменную — не её потребление. Доказательство — реакция прошивки
   (пример: новый период кадров действует только со следующего запланированного кадра).
 - Всё записанное возвращается и проверяется чтением; при неудаче итог `ERROR`.
+- На плате GDB подключается к работающей прошивке: `main` уже пройден. Сценарий от начала
+  начинается с `monitor("reset halt")` (так в шаблоне для `hardware`), иначе `reach("main")` висит.
+- Без ELF сценарий работает по адресам и регистрам (`assets/address_scenario.py`): `--elf` не нужен.
 - На плате в конце `continue &`, затем `detach`: `detach` при остановленном ядре оставляет
   цель в halt, и следующий прогон начинается со «застывших» счётчиков.
 
@@ -164,9 +172,15 @@ python scripts/run_scenario.py --elf build/app.elf --scenario tests/my_scenario.
 python scripts/run_scenario.py --elf build/app.elf --scenario tests/my_scenario.py \
     --openocd-config interface/stlink.cfg --openocd-config target/stm32f4x.cfg --out build/scenario/run2
 
-# удалённый стенд через туннель (раздел 4.1)
+# удалённый стенд: OpenOCD на узле и туннель поднимает запускатель (раздел 4.1)
 python scripts/run_scenario.py --elf build/app.elf --scenario tests/my_scenario.py \
-    --attach 127.0.0.1:13333 --environment hardware --out build/scenario/run3
+    --ssh user@stand --ssh-key ~/.ssh/id_stand --openocd '~/.local/openocd/bin/openocd' \
+    --openocd-config interface/stlink.cfg --openocd-config target/stm32f4x.cfg \
+    --adapter-serial <серийник> --out build/scenario/run3
+
+# готовый сервер или свой туннель
+python scripts/run_scenario.py --scenario assets/address_scenario.py --attach 127.0.0.1:13333 \
+    --environment hardware --out build/scenario/run4
 ```
 
 Запускатель:
@@ -187,20 +201,48 @@ python scripts/run_scenario.py --elf build/app.elf --scenario tests/my_scenario.
 
 ### 4.1 Удалённый стенд
 
-OpenOCD на узле обычно слушает только `127.0.0.1`, поэтому нужен SSH-туннель:
+С `--ssh` запускатель сам выполняет то, что иначе делается вручную:
+
+1. на узле выбирает свободный порт и запускает OpenOCD через `nohup` (только `127.0.0.1`,
+   без telnet и Tcl), ждёт строку готовности в журнале и запоминает pid;
+2. поднимает `ssh -N -L` с `ExitOnForwardFailure=yes` и `ConnectTimeout=10` на свободный
+   локальный порт (готовность — живой процесс, без пробного подключения к GDB-порту);
+3. после сценария останавливает туннель, убивает на узле только свой pid и забирает журнал
+   OpenOCD в `server.log`.
+
+Для ручной работы: сложные команды передаются файлом (`scp`, затем `ssh host "bash /tmp/job.sh"`),
+файл `.sh` — с окончаниями LF; `~` в пути на узле в кавычках не раскрывается (`"$HOME"/...`).
+
+### 4.2 Команды цели без GDB
+
+Стоп, старт, сброс и чтение памяти не требуют GDB: `scripts/ocd.py` запускает OpenOCD на один
+сеанс (локально или на узле по SSH) либо шлёт команды работающему OpenOCD через Tcl-порт.
 
 ```sh
-# на узле: OpenOCD переживает выход из SSH только с nohup
-ssh -o ConnectTimeout=10 user@stand "nohup openocd -f interface/stlink.cfg \
-  -c 'adapter serial <серийник>' -f target/stm32f4x.cfg -c 'gdb_port 3333' > /tmp/ocd.log 2>&1 &"
-# на хосте: туннель падает сразу, если порт занят
-ssh -N -o BatchMode=yes -o ExitOnForwardFailure=yes -o ConnectTimeout=10 \
-  -L 13333:127.0.0.1:3333 user@stand
+python scripts/ocd.py --ssh user@stand --openocd '<openocd на узле>' --target stm32f4x \
+    --serial <серийник> state read 0xE0042000          # state RUNNING ... / 0xE0042000 0x10006431
+python scripts/ocd.py ... halt state                    # остаётся HALTED и после выхода OpenOCD
+python scripts/ocd.py ... resume state                  # в новом сеансе — halt + resume
+python scripts/ocd.py ... reset-halt raw "reg pc"       # PC на векторе сброса
+python scripts/ocd.py ... reset-run state
 ```
 
-Сложные команды для узла передаются файлом (`scp`, затем `ssh host "bash /tmp/job.sh"`):
-вложенные кавычки ломаются, особенно из PowerShell. Файл `.sh` — с окончаниями LF.
-Туннель и OpenOCD на узле запустивший их останавливает сам (раздел 7).
+Чтение одной строкой без помощника:
+
+```sh
+ssh user@stand "openocd -f interface/stlink.cfg -c 'adapter serial <серийник>' -f target/stm32f4x.cfg \
+  -c init -c 'mdw 0xE0042000' -c shutdown 2>&1 | grep -i '^0x'"
+```
+
+Что установлено на стендах (подробно — [references/remote-commands.md](references/remote-commands.md)):
+
+- чтение памяти не останавливает ядро: счётчик прошивки растёт между чтениями;
+- `halt` в одноразовом сеансе сохраняется после выхода OpenOCD — его надо снять;
+- `resume` сразу после `init` отклоняется (`not halted`): OpenOCD ещё не опросил цель;
+  работает `halt` + `resume`;
+- вызов: 0,3 с локально, 0,7–1,9 с по SSH; с работающим сервером — `socat` на узле ~0,5 с,
+  туннель и `--tcl` ~0,4 с, локально 0,1 с;
+- копия Flash (`flash read_bank`), прошивка и возврат образа с проверкой хеша — `raw`.
 
 ## 5. Действия, которые не завершаются сами
 
@@ -246,27 +288,40 @@ ssh -N -o BatchMode=yes -o ExitOnForwardFailure=yes -o ConnectTimeout=10 \
 если OpenOCD там запущен вами (скобки не дают шаблону совпасть с собственной оболочкой).
 Освобождение порта проверяется реальным подключением, а не списком процессов.
 
-## 8. Пример: прошивка-зонд в Renode
+## 8. Примеры и проверенные стенды
 
 `assets/probe_scenario.py` выполняется на [stm32-skills-probe](https://github.com/ViacheslavMezentsev/stm32-skills-probe)
-(BlackPill F411CE, модель `emu/renode/stm32f4_probe.repl` с UART семихостинга):
+в Renode (модель `emu/renode/stm32f4_probe.repl` с UART семихостинга) и на платах:
 
-1. `main` до инициализации: `probe_state != 0xA5`; после `probe_init` — `0xA5`;
+1. до инициализации `probe_state != 0xA5`, после `probe_init` — `0xA5`;
 2. два кадра подряд: период 100 мс по `probe_telemetry.tick`;
 3. действие: `probe_frame_period_ms = 20`;
 4. следующий интервал остаётся 100 мс (кадр уже запланирован), за ним — 20 мс;
 5. соседние признаки прежние, период возвращён и проверен чтением.
 
+`assets/address_scenario.py` без ELF: DEV_ID (`SCENARIO_DEV_ID`, `SCENARIO_IDCODE`), остановка при
+подключении, `reset halt` на вектор сброса, `stepi`.
+
 ```sh
-cmake -S stm32-skills-probe -B build/probe -G Ninja -DBOARD=F411CE -DPROBE_LOG_SEMIHOSTING=ON \
-  -DPROBE_EXIT_MS=500 -DARM_TOOLCHAIN_ROOT=<тулчейн> && cmake --build build/probe
-python scripts/run_scenario.py --elf build/probe/stm32_skills_probe.elf \
-  --scenario assets/probe_scenario.py --renode-platform build/probe-semihosting.repl --out build/gdbpy
+cmake -S stm32-skills-probe -B build/probe -G Ninja -DBOARD=F411CE -DARM_TOOLCHAIN_ROOT=<тулчейн>
+cmake --build build/probe        # для Renode добавить -DPROBE_LOG_SEMIHOSTING=ON -DPROBE_EXIT_MS=500
 ```
 
-CI репозитория выполняет этот пример и четыре варианта шаблона: исходный (PASS), провал
-проверки (FAIL, код 1), исключение после записи (ERROR, переменная возвращена) и зависший
-сценарий (TIMEOUT с последним шагом). Это проверка в эмуляторе, не на плате.
+Проверено 28.10.2026 (OpenOCD 0.12, `arm-none-eabi-gdb-py3` 15.2):
+
+| Стенд | Маршрут | Команды и чтение | Сценарий по адресам | Зонд: Flash → сценарий → возврат |
+| :--- | :--- | :--- | :--- | :--- |
+| BlackPill F411CE | локально, Windows | PASS | PASS | PASS, хеш образа совпал |
+| BlackPill F411CE | узел по SSH | PASS | PASS | PASS, хеш образа совпал |
+| BlackPill F401CC | узел по SSH | PASS | PASS | PASS, хеш образа совпал |
+| Blue Pill F103C8 | узел по SSH | PASS | PASS | PASS, хеш образа совпал |
+| Nucleo F030R8 | узел по SSH | PASS | PASS | — (зонд не поддерживает) |
+| F429ZI, ST-Link V2 | узел по SSH, USB-адрес | PASS | PASS | — (зонд не поддерживает) |
+
+В CI репозитория пример зонда и четыре варианта шаблона (PASS, FAIL, ERROR с возвратом
+переменной, TIMEOUT с последним шагом) выполняются в Renode. Однажды на трёх удалённых платах
+первое чтение сразу после прошивки вернуло нули при работающем ядре; в повторах готовность
+была с первой попытки. Причина не установлена, поэтому готовность проверяется переменной прошивки.
 
 ## 9. Порядок целиком
 

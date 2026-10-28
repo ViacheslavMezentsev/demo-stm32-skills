@@ -445,6 +445,35 @@ def check_debug_tools():
     return "both skill copies: TCP noise, ROS publishing, masks, GDB selection, process ownership"
 
 
+def check_gdbpy_ocd():
+    """ocd.py: разбор действий, команды одноразового сеанса и ответы OpenOCD без пробника."""
+    sys.path.insert(0, str(GDBPY_SKILL / "scripts"))
+    import ocd
+    actions = ocd.parse_actions(["state", "read", "0x20000000", "2", "resume", "raw", "reg pc"])
+    sent = ocd.commands(actions, True)
+    if "halt" not in sent[sent.index("echo {@@2}"):] or "mdw 0x20000000 2" not in sent:
+        raise RuntimeError("one-shot commands: %s" % sent)
+    if "halt" in ocd.commands(ocd.parse_actions(["resume"]), False):
+        raise RuntimeError("server resume must not halt")
+    text = ("Info : noise\n@@0\n0xe000edf0: 00030003 \n@@1\n0x20000000: 000000a5 00000010 \n"
+            "@@2\nError: not halted\n@@3\npc (/32): 0x08000131\n@@end\n")
+    import contextlib
+    import io
+    stream = io.StringIO()
+    with contextlib.redirect_stdout(stream):
+        ocd.report(actions, text)
+    lines = stream.getvalue().splitlines()
+    expected = ["state HALTED (DHCSR 0x00030003)", "0x20000000 0x000000A5", "0x20000004 0x00000010", "resume ERROR"]
+    if lines[:4] != expected or "pc (/32): 0x08000131" not in lines:
+        raise RuntimeError("report: %s" % lines)
+    states = [ocd.decode_state(v) for v in (0x01010001, 0x00050001, 0x00030003, 0x00080001)]
+    if states != ["RUNNING", "SLEEPING", "HALTED", "LOCKUP"]:
+        raise RuntimeError("DHCSR decode: %s" % states)
+    if ocd.remote_path("~/.local/x y/openocd") != '"$HOME"/\'.local/x y/openocd\'':
+        raise RuntimeError("remote path quoting")
+    return "actions, one-shot/server resume, report and DHCSR decode"
+
+
 def check_shared():
     text = run([sys.executable, "-B", ROOT / "ci" / "sync_shared.py", "--check"])
     return text.strip().splitlines()[-1]
@@ -460,6 +489,7 @@ KITS = [
     ("kits: TOML files load", check_toml),
     ("kits: .clang-format assets", check_clang_format),
     ("embedded-tech-spec: template and example", check_tech_spec),
+    ("stm32-gdbpy-scenario: ocd.py parsing", check_gdbpy_ocd),
     ("stm32-renode-emulator: renode_compat", check_renode_compat),
     ("weact-logic-analyzer: capture integrity", check_weact_integrity),
     ("weact-logic-analyzer: self-test", check_weact),

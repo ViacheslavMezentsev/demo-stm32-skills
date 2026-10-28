@@ -40,6 +40,13 @@ def write(expr, value):
     gdb.execute("set var %s = %d" % (expr, value))
 
 
+def monitor(command):
+    # Команда GDB-сервера (OpenOCD: reset halt, reset run); после неё кэш регистров GDB устарел.
+    text = gdb.execute("monitor " + command, to_string=True)
+    gdb.execute("maintenance flush register-cache")
+    return text
+
+
 def reach(symbol, condition=None):
     # Временная точка перед continue; условие — атрибутом, не аргументом конструктора.
     point = gdb.Breakpoint(symbol, internal=True, temporary=True)
@@ -67,6 +74,9 @@ try:
                                          os.environ["SCENARIO_GDB_PORT"]))
 
     # ---------------------------------------------------------------- Сценарий
+    if environment == "hardware":
+        # На плате GDB подключается к работающей прошивке: main уже пройден, начинаем со сброса.
+        monitor("reset halt")
     step("main")
     check("main reached", reach("main"))
     # Пример: исходное состояние, действие, наблюдаемый результат, соседний признак.

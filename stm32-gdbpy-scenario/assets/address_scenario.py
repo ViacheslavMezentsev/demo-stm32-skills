@@ -1,0 +1,124 @@
+"""Пример по шаблону без ELF: сценарий по адресам для любой платы с Cortex-M.
+
+Сверяет DEV_ID (SCENARIO_DEV_ID, адрес — SCENARIO_IDCODE), проверяет остановку ядра при
+подключении GDB, сброс с остановкой на векторе сброса (SCENARIO_FLASH — начало Flash)
+и шаг stepi. После сценария плата продолжает работу с начала прошивки.
+"""
+import json
+import os
+import traceback
+
+import gdb
+
+checks = {}
+records = []
+originals = {}
+
+
+def step(name):
+    # Метка шага в журнале: при TIMEOUT запускатель покажет, где встали.
+    print("STEP " + name, flush=True)
+
+
+def check(name, value):
+    checks[name] = bool(value)
+    print(("PASS " if value else "FAIL ") + name, flush=True)
+
+
+def record(name, data):
+    records.append({"name": name, "data": data})
+
+
+def read(expr):
+    return int(gdb.parse_and_eval(expr))
+
+
+def write(expr, value):
+    # Исходное значение запоминается один раз и возвращается в finish().
+    if expr not in originals:
+        originals[expr] = read(expr)
+    gdb.execute("set var %s = %d" % (expr, value))
+
+
+def monitor(command):
+    # Команда GDB-сервера (OpenOCD: reset halt, reset run); после неё кэш регистров GDB устарел.
+    text = gdb.execute("monitor " + command, to_string=True)
+    gdb.execute("maintenance flush register-cache")
+    return text
+
+
+def reach(symbol, condition=None):
+    # Временная точка перед continue; условие — атрибутом, не аргументом конструктора.
+    point = gdb.Breakpoint(symbol, internal=True, temporary=True)
+    if condition:
+        point.condition = condition
+    gdb.execute("continue")
+    frame = gdb.newest_frame().name() or ""
+    return frame.removesuffix("()") == symbol.removesuffix("()")
+
+
+def restore():
+    # Возврат записанного и проверка чтением: без неё восстановление не доказано.
+    for expr, value in originals.items():
+        gdb.execute("set var %s = %d" % (expr, value))
+    return all(read(expr) == value for expr, value in originals.items())
+
+
+environment = os.environ.get("SCENARIO_ENVIRONMENT", "hardware")
+status, restored = "ERROR", None
+try:
+    gdb.execute("set pagination off")
+    gdb.execute("set confirm off")
+    gdb.execute("set remotetimeout 15")
+    gdb.execute("target remote %s:%s" % (os.environ.get("SCENARIO_GDB_HOST", "127.0.0.1"),
+                                         os.environ["SCENARIO_GDB_PORT"]))
+
+    # ---------------------------------------------------------------- Сценарий
+    # Без ELF: только адреса и регистры, один сценарий для любой платы с Cortex-M.
+    flash = int(os.environ.get("SCENARIO_FLASH", "0x08000000"), 0)
+    idcode = int(os.environ.get("SCENARIO_IDCODE", "0xE0042000"), 0)
+    expected = os.environ.get("SCENARIO_DEV_ID")
+
+    step("identity")
+    dev_id = read("*(unsigned int *)%d" % idcode) & 0xFFF
+    record("dev_id", "0x%03X" % dev_id)
+    if expected:
+        check("DEV_ID %s" % expected, dev_id == int(expected, 0))
+
+    step("attach")
+    check("core halted after attach", read("*(unsigned int *)0xE000EDF0") & (1 << 17))
+
+    step("reset halt")
+    monitor("reset halt")
+    pc = read("$pc")
+    check("PC at reset vector", pc == read("*(unsigned int *)%d" % (flash + 4)) & ~1)
+    check("SP from vector table", read("$sp") == read("*(unsigned int *)%d" % flash))
+
+    step("stepi")
+    gdb.execute("stepi 3")
+    check("PC moved after stepi", read("$pc") != pc)
+    # ------------------------------------------------------------------------
+
+    status = "PASS" if checks and all(checks.values()) else "FAIL"
+except Exception:
+    traceback.print_exc()
+    status = "ERROR"
+finally:
+    try:
+        restored = restore() if originals else None
+    except Exception:
+        traceback.print_exc()
+        restored = False
+    if restored is False:
+        status = "ERROR"
+    with open(os.environ["SCENARIO_RESULT"], "w", encoding="utf-8") as stream:
+        json.dump({"environment": environment, "status": status, "checks": checks,
+                   "records": records, "restored": restored}, stream, ensure_ascii=False, indent=2)
+    if environment == "hardware":
+        try:
+            # Плату оставляем работающей: detach при остановленном ядре оставит её в halt.
+            gdb.execute("continue &")
+            gdb.execute("detach")
+        except Exception:
+            traceback.print_exc()
+    gdb.execute("quit " + ("0" if status == "PASS" else "1"))

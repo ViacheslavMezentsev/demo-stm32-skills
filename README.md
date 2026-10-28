@@ -41,7 +41,7 @@
 | [stm32-ros-alt-channel](stm32-ros-alt-channel/) | Вывод переменных и регистров в ROS1 по SWD или rosserial; [как это работает](https://viacheslavmezentsev.github.io/demo-stm32-skills/skills/stm32-ros-alt-channel/) |
 | [stm32-diag-record](stm32-diag-record/) | Запись переменных и регистров по SWD, из Renode или заглушкой на таймере (RTT) в mcap или bag без ROS (STM32 и другие Cortex-M); [как это работает](https://viacheslavmezentsev.github.io/demo-stm32-skills/skills/stm32-diag-record/) |
 | [stm32-renode-emulator](stm32-renode-emulator/) | Проверка прошивки в эмуляторе Renode без платы; [как это работает](https://viacheslavmezentsev.github.io/demo-stm32-skills/skills/stm32-renode-emulator/) |
-| [stm32-gdbpy-scenario](stm32-gdbpy-scenario/) | Простой сценарий через GDB с Python: маршрут, подготовка, проверка наблюдаемого, восстановление и итог PASS/FAIL/ERROR/TIMEOUT |
+| [stm32-gdbpy-scenario](stm32-gdbpy-scenario/) | Простой сценарий через GDB с Python и команды цели без GDB (стоп, старт, сброс, чтение адреса одной строкой по SSH); проверено на шести стендах |
 | [weact-logic-analyzer](weact-logic-analyzer/) | Измерения логическим анализатором WeAct через sigrok-cli |
 
 ### Документация и процесс
