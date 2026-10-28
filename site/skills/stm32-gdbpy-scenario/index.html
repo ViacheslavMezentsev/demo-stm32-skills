@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="ru" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Как работает stm32-gdbpy-scenario</title>
+<meta name="description" content="Инфографика навыка stm32-gdbpy-scenario: сценарий через GDB с Python без фреймворка и команды цели (стоп, старт, сброс, чтение) через OpenOCD и J-Link, локально и по SSH.">
+<link rel="stylesheet" href="../../assets/site.css">
+<script src="../../assets/theme.js"></script>
+</head>
+<body>
+<header class="site-header">
+  <div class="inner">
+    <a class="brand" href="../../">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+        <rect x="6" y="6" width="12" height="12" rx="1.5"/><rect x="9.5" y="9.5" width="5" height="5" rx="0.5"/>
+        <path d="M9 2.5v3.5M12 2.5v3.5M15 2.5v3.5M9 18v3.5M12 18v3.5M15 18v3.5M2.5 9h3.5M2.5 12h3.5M2.5 15h3.5M18 9h3.5M18 12h3.5M18 15h3.5"/>
+      </svg>
+      <span>demo-stm32-skills</span>
+    </a>
+    <nav class="site-nav" aria-label="Разделы">
+      <a href="../../#skills">Навыки</a>
+      <a class="wide" href="https://github.com/ViacheslavMezentsev/demo-stm32-skills">Репозиторий</a>
+      <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Тема">
+        <svg class="icon-dark" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M9.6 1.1a.75.75 0 0 1 .3.9 5.5 5.5 0 0 0 4.1 7.3.75.75 0 0 1 .4 1.3A7 7 0 1 1 8.3 1a.75.75 0 0 1 1.3.1ZM7.4 2.6a5.5 5.5 0 1 0 5.4 8.6 7 7 0 0 1-5.4-8.6Z"/></svg>
+        <svg class="icon-light" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 11.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm0 1.5a5 5 0 1 1 0-10 5 5 0 0 1 0 10ZM8 0a.75.75 0 0 1 .75.75v.5a.75.75 0 0 1-1.5 0v-.5A.75.75 0 0 1 8 0Zm0 14a.75.75 0 0 1 .75.75v.5a.75.75 0 0 1-1.5 0v-.5A.75.75 0 0 1 8 14ZM0 8a.75.75 0 0 1 .75-.75h.5a.75.75 0 0 1 0 1.5h-.5A.75.75 0 0 1 0 8Zm14 0a.75.75 0 0 1 .75-.75h.5a.75.75 0 0 1 0 1.5h-.5A.75.75 0 0 1 14 8ZM2.3 2.3a.75.75 0 0 1 1.06 0l.36.36a.75.75 0 0 1-1.06 1.06l-.36-.36a.75.75 0 0 1 0-1.06Zm9.98 9.98a.75.75 0 0 1 1.06 0l.36.36a.75.75 0 0 1-1.06 1.06l-.36-.36a.75.75 0 0 1 0-1.06ZM13.7 2.3a.75.75 0 0 1 0 1.06l-.36.36a.75.75 0 1 1-1.06-1.06l.36-.36a.75.75 0 0 1 1.06 0ZM3.72 12.28a.75.75 0 0 1 0 1.06l-.36.36a.75.75 0 0 1-1.06-1.06l.36-.36a.75.75 0 0 1 1.06 0Z"/></svg>
+        <svg class="icon-auto" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0Zm0 1.5v13a6.5 6.5 0 0 0 0-13Z"/></svg>
+      </button>
+    </nav>
+  </div>
+</header>
+<main>
+<div class="breadcrumb"><a href="../../">demo-stm32-skills</a> / <a href="../../#skills">навыки</a> / stm32-gdbpy-scenario</div>
+<h1>Как работает stm32-gdbpy-scenario</h1>
+<p class="lead">Один сценарий — один прогон — один проверяемый итог. Python внутри GDB доходит до функции, читает
+или временно меняет переменную, проверяет наблюдаемую реакцию прошивки и возвращает всё как было. Без
+фреймворка: нужны GDB с Python, GDB-сервер и Python на хосте. Для коротких действий GDB не нужен вовсе —
+стоп, старт, сброс и чтение адреса выполняются одной командой, в том числе на удалённом стенде по SSH.</p>
+
+<div class="box">
+  <h2>Путь сценария</h2>
+  <div class="legend">
+    <span class="offline">подготовка</span>
+    <span class="live">работа с платой</span>
+    <span class="alt">эмулятор</span>
+    <span class="view">итог и вмешательство</span>
+  </div>
+
+  <div class="stage offline">
+    <div class="stage-title">1. Подготовка до действия</div>
+    <div class="stage-note">Почти все провалы — до воздействия: не тот GDB, не та плата, ядро стоит.</div>
+    <div class="flow">
+      <div class="node"><h3>GDB с Python</h3><p>принимается только GDB, выполнивший <code>python print(6 * 7)</code></p><span class="mono">run_scenario.py --check-gdb</span></div>
+      <div class="arrow">и</div>
+      <div class="node"><h3>Отпечаток стенда</h3><p>пробник, узел и DEV_ID совпадают с прошлыми прогонами</p><span class="mono">ocd.py state read 0xE0042000</span></div>
+      <div class="arrow">и</div>
+      <div class="node"><h3>Бюджет</h3><p>таймауты сервера и GDB, потолок итераций, ожидание по тикам цели</p><span class="mono">--timeout 60</span></div>
+    </div>
+  </div>
+
+  <div class="stage live">
+    <div class="stage-title">2. run_scenario.py поднимает сервер и запускает GDB</div>
+    <div class="stage-note">Свободный порт, готовность по журналу сервера, уборка только своих процессов.</div>
+    <div class="flow">
+      <div class="node"><h3>OpenOCD</h3><p>ST-Link или J-Link (<code>transport select swd</code>), локально</p><span class="mono">--openocd-config ...</span></div>
+      <div class="arrow">или</div>
+      <div class="node"><h3>J-Link GDB Server</h3><p>сервер SEGGER, имя МК из базы SEGGER</p><span class="mono">--jlink-device AT32F403ACGU7</span></div>
+      <div class="arrow">или</div>
+      <div class="node"><h3>Узел стенда</h3><p>сервер на узле через <code>nohup</code>, SSH-туннель, после прогона — kill своего pid</p><span class="mono">--ssh user@stand</span></div>
+      <div class="arrow">GDB</div>
+      <div class="node"><h3>Сценарий gdb-py</h3><p>шаблон: check, reach, read, write, monitor, record</p><span class="mono">gdb -nx -batch app.elf -ex "source ..."</span></div>
+    </div>
+    <div class="alt-row alt">
+      <div class="node"><h3>Без платы</h3><p>Renode поднимает GDB-сервер с моделью платы; тот же сценарий, итог помечается «emulator».</p><span class="mono">--renode-platform board.repl</span></div>
+    </div>
+  </div>
+
+  <div class="stage view">
+    <div class="stage-title">3. Итог и возврат</div>
+    <div class="stage-note">Итог пишется всегда, в <code>finally</code>; записанное возвращается и проверяется чтением.</div>
+    <div class="flow">
+      <div class="node"><h3>run.json</h3><p>проверки, наблюдения, окружение, время, последний шаг</p><span class="mono">status, checks, records, restored</span></div>
+      <div class="arrow">код</div>
+      <div class="node"><h3>PASS / FAIL / ERROR / TIMEOUT</h3><p>0 — PASS, 1 — провал проверки, 2 — исключение, невозвращённая переменная или зависание</p><span class="mono">годится для CI</span></div>
+      <div class="arrow">плата</div>
+      <div class="node"><h3>Работает дальше</h3><p>OpenOCD: <code>continue &amp;</code>, <code>detach</code>; J-Link: <code>monitor go</code>, <code>disconnect</code></p><span class="mono">не оставлять в halt</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="box">
+  <h2>Порядок внутри сценария</h2>
+  <div class="cycle">
+    <div class="step"><b>Сброс</b>На плате GDB подключается к работающей прошивке: сначала <code>monitor reset halt</code>, иначе <code>reach("main")</code> зависнет.</div>
+    <div class="step"><b>Исходное</b>Прочитать то, что будет сравниваться.</div>
+    <div class="step"><b>Действие</b>Одна запись, вызов или достижение точки останова.</div>
+    <div class="step"><b>Наблюдаемое</b>Следствие, ради которого действие делалось, а не «записали».</div>
+    <div class="step"><b>Соседнее</b>То, что меняться не должно, не изменилось.</div>
+    <div class="step"><b>Возврат</b>Записанное возвращено и проверено чтением.</div>
+  </div>
+</div>
+
+<div class="cols">
+  <div class="box">
+    <h2>Команды без GDB</h2>
+    <div style="overflow-x:auto">
+    <table>
+      <tr><th>Действие</th><th>OpenOCD</th><th>J-Link Commander</th></tr>
+      <tr><td><code>read</code></td><td><code>mdw</code>, ядро не останавливается</td><td><code>mem32</code>, тоже на ходу</td></tr>
+      <tr><td><code>halt</code></td><td>сохраняется после выхода</td><td>отпускается при выходе</td></tr>
+      <tr><td><code>resume</code></td><td>в новом сеансе только после <code>halt</code></td><td><code>g</code>; для работающего ядра «already running»</td></tr>
+      <tr><td><code>reset-halt</code></td><td><code>reset halt</code></td><td><code>r</code></td></tr>
+      <tr><td><code>reset-run</code></td><td><code>reset run</code></td><td><code>r</code>, <code>g</code></td></tr>
+    </table>
+    </div>
+    <pre>python scripts/ocd.py --ssh user@stand --target stm32f4x \
+    --serial &lt;серийник&gt; state read 0xE0042000
+python scripts/jlink.py --ssh user@stand --device AT32F403ACGU7 \
+    --serial &lt;номер&gt; halt state resume</pre>
+  </div>
+  <div class="box">
+    <h2>Чтение адреса одной строкой</h2>
+    <pre>ssh user@stand "openocd -f interface/stlink.cfg \
+  -c 'adapter serial &lt;серийник&gt;' -f target/stm32f4x.cfg \
+  -c init -c 'mdw 0xE0042000' -c shutdown 2&gt;&amp;1 | grep -i '^0x'"
+# 0xe0042000: 10006431</pre>
+    <div style="overflow-x:auto">
+    <table>
+      <tr><th>Способ</th><th>Время</th></tr>
+      <tr><td>одноразовый сеанс, локально</td><td>0,3 с</td></tr>
+      <tr><td>одноразовый сеанс по SSH</td><td>0,7–1,9 с</td></tr>
+      <tr><td>работающий OpenOCD, <code>socat</code> на узле</td><td>~0,5 с</td></tr>
+      <tr><td>туннель и Tcl-порт (<code>ocd.py --tcl</code>)</td><td>~0,4 с; локально 0,1 с</td></tr>
+    </table>
+    </div>
+  </div>
+</div>
+
+<div class="box">
+  <h2>Что важно понимать</h2>
+  <div class="facts">
+    <div class="fact"><b>Запись — не потребление</b>В примере новый период кадров действует только со следующего запланированного кадра: первый интервал после записи остаётся 100 мс.</div>
+    <div class="fact"><b>Проверять наблюдаемое</b>Ключ питания — намерение прошивки, работу тракта показывает только трафик.</div>
+    <div class="fact"><b>J-Link пишет точки во Flash</b>Без <code>monitor flash breakpoints = 0</code> J-Link GDB Server ставит программные точки останова записью во Flash. Запускатель включает это сам.</div>
+    <div class="fact"><b>Сброс и прошивка — вмешательство</b>Чтение памяти ядро не останавливает, а <code>halt</code>, сброс и запись Flash меняют работу платы. На силовой плате — только после проверки, что стенд тестовый.</div>
+    <div class="fact"><b>Пробник по USB-адресу</b>ST-Link V2 со старой прошивкой отдаёт нечитаемый серийник: <code>--adapter-usb-location 7-1.1.3</code>.</div>
+    <div class="fact"><b>Windows и порты</b>Фиксированный порт может попасть в диапазон, зарезервированный системой; запускатель берёт порт, выданный ОС.</div>
+  </div>
+</div>
+
+<div class="box">
+  <h2>Насколько проверено</h2>
+  <div class="cols" style="margin-bottom:0">
+    <div><h3 style="color: var(--success)">Проверено на стендах 28.10.2026</h3><ul>
+      <li>BlackPill F411CE локально (Windows) и по SSH: команды, сценарий по адресам, копия Flash, прошивка зонда, сценарий зонда, возврат образа с совпавшим хешем</li>
+      <li>F401CC и Blue Pill F103C8 по SSH: то же</li>
+      <li>Nucleo F030R8 и F429ZI (ST-Link V2 по USB-адресу) по SSH: команды и сценарий по адресам</li>
+      <li>AT32F403A за J-Link по SSH: JLinkExe и OpenOCD, сценарий через J-Link GDB Server и OpenOCD</li>
+    </ul></div>
+    <div><h3 style="color: var(--attention)">CI и открытые вопросы</h3><ul>
+      <li>CI: пример зонда в Renode и четыре исхода шаблона (PASS, FAIL, ERROR с возвратом, TIMEOUT)</li>
+      <li>однократное нулевое чтение сразу после прошивки — причина не установлена, готовность проверяется переменной прошивки</li>
+      <li>прошивка AT32 через OpenOCD не проверялась: драйвер Flash не опознал МК</li>
+    </ul></div>
+  </div>
+</div>
+
+<p><a href="https://github.com/ViacheslavMezentsev/demo-stm32-skills/tree/main/stm32-gdbpy-scenario">Описание навыка (SKILL.md) и скрипты</a> · версия 1.2.0</p>
+</main>
+<footer class="site-footer">
+  <div class="inner">
+    <span>demo-stm32-skills · лицензия MIT</span>
+    <a href="https://github.com/ViacheslavMezentsev/demo-stm32-skills">исходники на GitHub</a>
+    <a href="https://github.com/ViacheslavMezentsev/stm32-skills-probe">прошивка-зонд stm32-skills-probe</a>
+  </div>
+</footer>
+</body>
+</html>

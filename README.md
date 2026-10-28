@@ -2,7 +2,7 @@
 
 Набор навыков (Agent Skills) для ИИ-ассистентов, помогающих в разработке под STM32 и совместимые микроконтроллеры: настройка сборки, генерация кода, архитектура прошивок, отладка и диагностика.
 
-Наглядные объяснения отдельных навыков — на [сайте репозитория](https://viacheslavmezentsev.github.io/demo-stm32-skills/) (stm32-diag-record, stm32-renode-emulator, stm32-ros-alt-channel, embedded-tech-spec, weact-logic-analyzer).
+Наглядные объяснения отдельных навыков — на [сайте репозитория](https://viacheslavmezentsev.github.io/demo-stm32-skills/) (stm32-diag-record, stm32-renode-emulator, stm32-gdbpy-scenario, stm32-ros-alt-channel, embedded-tech-spec, weact-logic-analyzer).
 
 Все навыки оформлены по [спецификации Agent Skills](https://agentskills.io/specification) и подходят для Claude Code, Cursor, Codex и других агентов, поддерживающих этот формат.
 
@@ -41,7 +41,7 @@
 | [stm32-ros-alt-channel](stm32-ros-alt-channel/) | Вывод переменных и регистров в ROS1 по SWD или rosserial; [как это работает](https://viacheslavmezentsev.github.io/demo-stm32-skills/skills/stm32-ros-alt-channel/) |
 | [stm32-diag-record](stm32-diag-record/) | Запись переменных и регистров по SWD, из Renode или заглушкой на таймере (RTT) в mcap или bag без ROS (STM32 и другие Cortex-M); [как это работает](https://viacheslavmezentsev.github.io/demo-stm32-skills/skills/stm32-diag-record/) |
 | [stm32-renode-emulator](stm32-renode-emulator/) | Проверка прошивки в эмуляторе Renode без платы; [как это работает](https://viacheslavmezentsev.github.io/demo-stm32-skills/skills/stm32-renode-emulator/) |
-| [stm32-gdbpy-scenario](stm32-gdbpy-scenario/) | Простой сценарий через GDB с Python и команды цели без GDB (стоп, старт, сброс, чтение адреса одной строкой по SSH); ST-Link и J-Link, проверено на семи стендах |
+| [stm32-gdbpy-scenario](stm32-gdbpy-scenario/) | Простой сценарий через GDB с Python и команды цели без GDB (стоп, старт, сброс, чтение адреса одной строкой по SSH); ST-Link и J-Link, проверено на семи стендах; [как это работает](https://viacheslavmezentsev.github.io/demo-stm32-skills/skills/stm32-gdbpy-scenario/) |
 | [weact-logic-analyzer](weact-logic-analyzer/) | Измерения логическим анализатором WeAct через sigrok-cli |
 
 ### Документация и процесс

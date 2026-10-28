@@ -5,6 +5,9 @@
 
 ## [Unreleased]
 
+- Pages: страница stm32-gdbpy-scenario — путь сценария, порядок внутри сценария, команды без GDB,
+  чтение адреса одной строкой, отличия J-Link и проверенные стенды; карточка на главной.
+
 - stm32-gdbpy-scenario 1.2.0: J-Link — маршрут J-Link GDB Server (`--jlink-device`, локально и по SSH),
   OpenOCD с `interface/jlink.cfg` (`--openocd-transport`, `--openocd-set`, `--openocd-command`), `jlink.py`
   для команд через JLinkExe; сброс, подготовка и выход сервера передаются сценарию, как в stm32-gdbtest
