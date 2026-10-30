@@ -71,16 +71,21 @@ def find_gdb(explicit):
         if root:
             candidates.append(str(Path(root) / "bin" / (name + suffix)))
         candidates.append(shutil.which(name))
-    tried = []
+    tried, results = [], []
     for candidate in candidates:
         if not candidate or candidate in tried:
             continue
         tried.append(candidate)
-        if Path(candidate).is_file() and gdb_has_python(candidate):
+        if not Path(candidate).is_file():
+            results.append("  %s → нет файла" % candidate)
+        elif gdb_has_python(candidate):
             return candidate
+        else:
+            results.append("  %s → без Python (в xPack Python есть только у arm-none-eabi-gdb-py3)" % candidate)
         if candidate == explicit:
-            raise SystemExit("GDB без Python или не найден: %s" % explicit)
-    raise SystemExit("GDB с Python не найден (%s); задайте --gdb, GDB или ARM_TOOLCHAIN_ROOT" % ", ".join(GDB_NAMES))
+            raise SystemExit("GDB без Python или не найден:\n" + "\n".join(results))
+    raise SystemExit("GDB с Python не найден; задайте --gdb, GDB или ARM_TOOLCHAIN_ROOT. Проверено:\n" +
+                     ("\n".join(results) or "  в PATH нет %s" % ", ".join(GDB_NAMES)))
 
 
 def find_tool(explicit, env, names, windows_default=None):
@@ -187,6 +192,9 @@ def server_spec(args):
         args.server_setup, args.server_finish = "monitor flash breakpoints = 0", "monitor go|disconnect"
         return args.jlink_gdbserver, argv, "Waiting for GDB connection", "reset", "jlink " + args.jlink_device
     argv = openocd_args(args, None) + ["-c", "gdb_port {PORT}"]
+    # monitor resume, а не continue &: GDB не вставляет точки останова, и забытая точка сценария не
+    # остановит ядро после отключения; detach у OpenOCD сам ядро не запускает (проверено на F411CE).
+    args.server_finish = "monitor resume|detach"
     return args.openocd, argv, "for gdb connections", "reset halt", "openocd " + " ".join(args.openocd_config)
 
 
@@ -430,6 +438,17 @@ def run(args):
         summary["status"] = "ERROR" if summary["status"] != "TIMEOUT" else "TIMEOUT"
     finally:
         stop(server)
+        try:
+            summary["after"] = check_after(args, summary)
+        except (OSError, subprocess.SubprocessError, RuntimeError, SystemExit) as error:
+            summary["after"] = {"core": "?", "error": "%s: %s" % (type(error).__name__, error)}
+        after = summary.get("after") or {}
+        if after.get("core") in ("HALTED", "LOCKUP") and after.get("resumed_to") not in ("RUNNING", "SLEEPING") \
+                and summary["status"] != "TIMEOUT":
+            summary["status"] = "ERROR"
+            summary["error"] = summary.get("error") or ("ядро осталось в %s после прогона (DHCSR %s): запустите "
+                                                        "ocd.py resume или повторите с --after-check resume"
+                                                        % (after["core"], after.get("dhcsr")))
         summary["elapsed_s"] = round(time.monotonic() - started, 3)
         if summary["status"] == "ERROR" and not summary.get("error"):
             summary["error"] = first_cause(out)
@@ -448,6 +467,32 @@ def elf_sha256(path):
         return None
     import hashlib
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def check_after(args, summary):
+    """Состояние ядра после прогона: отдельный короткий сеанс OpenOCD читает DHCSR, не останавливая ядро."""
+    if args.after_check == "off" or summary.get("environment") != "hardware":
+        return None
+    if args.server_kind != "openocd" or len(args.openocd_config) < 2:
+        return {"core": "не проверено", "note": "проверка после прогона — только для маршрута OpenOCD"}
+    sys.path.insert(0, str(HERE))
+    import ocd
+    route = argparse.Namespace(openocd=args.openocd or "openocd", interface=args.openocd_config[0],
+                               target=args.openocd_config[1], transport=args.openocd_transport,
+                               serial=args.adapter_serial, usb_location=args.adapter_usb_location,
+                               set=args.openocd_set, ssh=args.ssh, ssh_key=args.ssh_key, timeout=40)
+    if not args.ssh:
+        route.openocd = find_server(args, args.openocd)
+    actions = ocd.parse_actions(["state"])
+    _, text = ocd.oneshot(route, actions)
+    rows = ocd.words(text)
+    after = {"core": ocd.decode_state(rows[0][1]), "dhcsr": "0x%08X" % rows[0][1]} if rows else \
+        {"core": "?", "error": (text.strip().splitlines() or ["нет ответа OpenOCD"])[-1][:200]}
+    if after["core"] in ("HALTED", "LOCKUP") and args.after_check == "resume":
+        ocd.oneshot(route, ocd.parse_actions(["resume"]))
+        rows = ocd.words(ocd.oneshot(route, actions)[1])
+        after["resumed_to"] = ocd.decode_state(rows[0][1]) if rows else "?"
+    return after
 
 
 def first_cause(out):
@@ -471,6 +516,9 @@ def summary_line(summary):
                                          summary.get("elapsed_s", 0))
     if summary.get("restored") is not None:
         line += ", восстановление %s" % ("подтверждено" if summary["restored"] else "НЕ подтверждено")
+    after = (summary.get("after") or {})
+    if after.get("resumed_to"):
+        line += ", ядро было в %s — запущено" % after["core"]
     image = (summary.get("image") or {}).get("status")
     if image == "match":
         line += ", образ совпадает с ELF"
@@ -520,6 +568,9 @@ def main():
     parser.add_argument("--image-check", choices=("auto", "full", "build-id", "off"), default="auto",
                         help="сверка Flash с ELF до сценария: auto — full на плате, нет в эмуляторе; "
                              "build-id — только build-id, если он есть; off — без сверки (так и пишется в итог)")
+    parser.add_argument("--after-check", choices=("check", "resume", "off"), default="check",
+                        help="после прогона на плате (OpenOCD) прочитать DHCSR: check — halt даёт ERROR, "
+                             "resume — запустить ядро и отметить это в итоге, off — не проверять")
     parser.add_argument("--style", choices=("strict", "warn", "off"), default="strict",
                         help="правила стиля сценария до запуска: strict — ошибка правила отменяет прогон (умолчание)")
     parser.add_argument("--environment-from", type=Path, metavar="JSON",

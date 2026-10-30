@@ -523,7 +523,16 @@ def check_gdbpy_environment():
         raise RuntimeError("fingerprint with UID")
     if "array set u" not in " ".join(environment.identify_command(probe, "openocd")):
         raise RuntimeError("identify command must read UID")
-    return "probe types, old ST-Link firmware, Cortex-M0 IDCODE, J-Link errors, fingerprint, UID hash, paths, summary"
+    twins = [dict(probe, serial=None, location=None, place="local", host=None), dict(probe, place="local", host=None)]
+    if not environment.ambiguous(twins[0], twins) or environment.ambiguous(twins[1], twins) or \
+            environment.ambiguous(twins[0], twins[:1]):
+        raise RuntimeError("probe without serial and location must not be identified next to a twin")
+    line = run_scenario.summary_line({"status": "PASS", "checks": {"a": True}, "elapsed_s": 1.0,
+                                      "after": {"core": "HALTED", "resumed_to": "RUNNING"}})
+    if line != "PASS: проверок 1/1, 1.0 с, ядро было в HALTED — запущено":
+        raise RuntimeError("summary after resume: %s" % line)
+    return ("probe types, old ST-Link firmware, Cortex-M0 IDCODE, J-Link errors, fingerprint, UID hash, ambiguous "
+            "probe, paths, summary")
 
 
 def tiny_elf(text, data, build_id=None):
@@ -569,7 +578,17 @@ def check_gdbpy_style_image():
            '    item = read_running(base + i * 4)\n'
            '    gpio = read_running(0x40020014)\n    host = "10.1.2.3"\n'
            '    check("value", read("g_app.mode") == 42)\n')
+    for asset in sorted((GDBPY_SKILL / "assets").glob("*.py")):
+        text = asset.read_text(encoding="utf-8")
+        if ".removesuffix(" in text or '"continue &|detach"' in text or "point.delete()" not in text:
+            raise RuntimeError("%s: Python 3.8, monitor resume finish and breakpoint cleanup expected" % asset.name)
     with tempfile.TemporaryDirectory() as folder:
+        legacy = pathlib.Path(folder) / "legacy.py"
+        legacy.write_text(section.sub(lambda m: m.group(1) + '    name = "f()".removesuffix("()")\n'
+                                      '    point = gdb.Breakpoint("main")\n' + m.group(2), template), encoding="utf-8")
+        rules = sorted({f["rule"] for f in check_scenario.check(legacy)["findings"]})
+        if rules != ["SC13", "SC14"]:
+            raise RuntimeError("Python 3.8 and breakpoint rules: %s" % rules)
         path = pathlib.Path(folder) / "bad.py"
         path.write_text(section.sub(lambda m: m.group(1) + bad + m.group(2), template), encoding="utf-8")
         found = check_scenario.check(path)

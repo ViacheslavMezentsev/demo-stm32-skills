@@ -15,6 +15,7 @@ import gdb
 checks = {}
 records = []
 originals = {}
+breakpoints = []  # точки сценария: снимаются в finally, даже если сценарий прервался
 
 
 def step(name):
@@ -54,9 +55,15 @@ def reach(symbol, condition=None):
     point = gdb.Breakpoint(symbol, internal=True, temporary=True)
     if condition:
         point.condition = condition
+    breakpoints.append(point)
     gdb.execute("continue")
     frame = gdb.newest_frame().name() or ""
-    return frame.removesuffix("()") == symbol.removesuffix("()")
+    return plain(frame) == plain(symbol)
+
+
+def plain(name):
+    # Без str.removesuffix (3.9): GDB на узле бывает собран с Python 3.8.
+    return name[:-2] if name.endswith("()") else name
 
 
 def restore():
@@ -125,6 +132,9 @@ except Exception:
     traceback.print_exc()
     status = "ERROR"
 finally:
+    for point in breakpoints:
+        if point.is_valid():
+            point.delete()
     try:
         restored = restore() if originals else None
     except Exception:
@@ -138,8 +148,8 @@ finally:
     if environment == "hardware":
         try:
             # Плату оставляем работающей: detach при остановленном ядре оставит её в halt.
-            # OpenOCD: continue & и detach; J-Link GDB Server: monitor go и disconnect.
-            for command in os.environ.get("SCENARIO_FINISH", "continue &|detach").split("|"):
+            # OpenOCD: monitor resume и detach; J-Link GDB Server: monitor go и disconnect.
+            for command in os.environ.get("SCENARIO_FINISH", "monitor resume|detach").split("|"):
                 gdb.execute(command)
         except Exception:
             traceback.print_exc()

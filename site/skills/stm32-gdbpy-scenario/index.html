@@ -87,7 +87,7 @@
       <div class="arrow">код</div>
       <div class="node"><h3>PASS / FAIL / ERROR / TIMEOUT</h3><p>0 — PASS, 1 — провал проверки, 2 — исключение, невозвращённая переменная или зависание</p><span class="mono">годится для CI</span></div>
       <div class="arrow">плата</div>
-      <div class="node"><h3>Работает дальше</h3><p>OpenOCD: <code>continue &amp;</code>, <code>detach</code>; J-Link: <code>monitor go</code>, <code>disconnect</code></p><span class="mono">не оставлять в halt</span></div>
+      <div class="node"><h3>Работает дальше</h3><p>OpenOCD: <code>monitor resume</code>, <code>detach</code>; J-Link: <code>monitor go</code>, <code>disconnect</code>; затем проверка DHCSR</p><span class="mono">не оставлять в halt</span></div>
     </div>
   </div>
 </div>
@@ -158,6 +158,7 @@ python scripts/jlink.py --ssh user@stand --device AT32F403ACGU7 \
   <h2>Насколько проверено</h2>
   <div class="cols" style="margin-bottom:0">
     <div><h3 style="color: var(--success)">Проверено на стендах 28–30.10.2026</h3><ul>
+      <li>30.10, версия 1.5.0: ядро в halt после сценария воспроизведено и исправлено (финал <code>monitor resume</code>, снятие точек, проверка DHCSR); <code>wait_counter</code>; пять плат локально</li>
       <li>30.10, версия 1.4.0: сверка образа на F411CE (своя сборка — совпадение, чужая — отказ до сценария), хеш UID в отчёте всех STM32 узла, запуск по отчёту окружения</li>
       <li>30.10, версия 1.3.0: опознание шести отладчиков узла (ST-Link V2 с нечитаемым серийником, J-Link с AT32), выбор по DEV_ID и типу; окно работы без остановки на пяти STM32 и AT32</li>
       <li>BlackPill F411CE локально (Windows) и по SSH: команды, сценарий по адресам, копия Flash, прошивка зонда, сценарий зонда, возврат образа с совпавшим хешем</li>

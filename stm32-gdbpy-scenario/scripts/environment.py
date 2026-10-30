@@ -204,7 +204,10 @@ def scan(args, place):
                                    " прошивки): выбирать по месту USB --adapter-usb-location %s"
                                    % (item.get("location") or "<bus>-<port>"))
         elif not item.get("serial_hex"):
-            probe["issues"].append("серийника нет: выбирать по месту USB")
+            probe["issues"].append("серийника нет: выбирать по месту USB --adapter-usb-location %s"
+                                   % item["location"] if item.get("location") else
+                                   "серийника нет, место USB неизвестно (Windows его не сообщает): выбрать можно, "
+                                   "только если этот отладчик единственный своего типа")
         if item.get("node") and not item.get("access"):
             probe["issues"].append("нет прав на %s: правило udev или группа plugdev" % item["node"])
         if kind == "jlink" and any(d and d.lower() == "winusb" for d in item.get("drivers") or []):
@@ -221,6 +224,13 @@ def select_args(probe):
     if probe.get("location"):
         return ["-c", "adapter usb location %s" % probe["location"]]
     return []
+
+
+def ambiguous(probe, probes):
+    """Пробник нельзя выбрать для OpenOCD: нечем указать его, а другой такого же типа рядом есть."""
+    return not select_args(probe) and any(other is not probe and other["kind"] == probe["kind"] and
+                                          other["place"] == probe["place"] and other["host"] == probe["host"]
+                                          for other in probes)
 
 
 def uid_table():
@@ -413,6 +423,12 @@ def main():
                 if "FOUND" not in out:
                     raise RuntimeError("OpenOCD не найден на узле %s: %s" % (args.ssh, args.openocd_remote))
             for probe in probes:
+                if ambiguous(probe, probes):
+                    # Без серийника и места USB OpenOCD откроет первый попавшийся пробник этого типа:
+                    # ответ пришёл бы от другой платы и был бы приписан этому отладчику.
+                    probe["error"] = ("нельзя опросить однозначно: нет серийника и места USB, а отладчиков этого "
+                                      "типа несколько; отключите остальные или подключите его к узлу Linux")
+                    continue
                 identify(args, probe)
     except (RuntimeError, ValueError) as error:
         print("ОШИБКА: %s" % error, file=sys.stderr)

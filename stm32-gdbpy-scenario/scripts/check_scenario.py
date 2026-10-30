@@ -15,6 +15,7 @@
   # scenario: allow-address: <причина>     адрес числом разрешён (нет символа, регистр без SVD)
   # scenario: addresses-allowed: <причина>  в начале файла: сценарий без ELF, по адресам
 
+Правила — references/elf-symbols.md, раздел 6.
 Код возврата: 0 — ошибок нет, 1 — есть ошибки (с --strict и предупреждения), 2 — файл не разобран.
 """
 import argparse
@@ -105,7 +106,7 @@ class Checker(object):
             if not isinstance(node, ast.Constant) or node in self.docstrings:
                 continue
             values = []
-            if isinstance(node.value, int) and not isinstance(node.value, bool):
+            if isinstance(node.value, int) and not isinstance(node.value, bool) and not self.mask(node):
                 values = [node.value]
             elif isinstance(node.value, str):
                 values = [int(v, 16) for v in HEX_IN_TEXT.findall(node.value)]
@@ -114,6 +115,12 @@ class Checker(object):
                     if low <= value < high:
                         self.address(node, value, rule, what)
                         break
+
+    def mask(self, node):
+        """Число — маска или сдвиг в битовой операции (x & 0xFFFFFFFF), а не адрес."""
+        parent = self.parents.get(node)
+        return node.value == 0xFFFFFFFF or (isinstance(parent, ast.BinOp) and isinstance(
+            parent.op, (ast.BitAnd, ast.BitOr, ast.BitXor, ast.LShift, ast.RShift)))
 
     def address(self, node, value, rule, what):
         line = node.lineno
@@ -172,8 +179,8 @@ class Checker(object):
             if name == "execute" and re.match(r"\s*set\s+var", text):
                 self.add("warning", "SC07", call.lineno, "set var мимо write(): исходное значение не запомнится")
             if name == "sleep" and not inside_function(self, call):
-                self.add("warning", "SC06", call.lineno, "ожидание по часам хоста: ждите по счётчику цели "
-                         "(тики, номер кадра) или reach с условием")
+                self.add("warning", "SC06", call.lineno, "ожидание по часам хоста: ждите по счётчику цели — "
+                         "wait_counter(адрес, прирост, &тик, срок) из шаблона — или reach с условием")
             if name == "reach" and re.search(r"\.(c|cc|cpp|h|hpp|s):\d+", text):
                 self.add("warning", "SC11", call.lineno, "точка по номеру строки сдвигается с правкой исходника: "
                          "лучше функция или метка")
@@ -181,11 +188,38 @@ class Checker(object):
                 for literal in magic_values(call.args[1]):
                     self.add("warning", "SC09", call.lineno, "ожидаемое значение %s числом: возьмите его из "
                              "enum прошивки или именованной константы с ссылкой на требование" % literal)
+        for call in calls:
+            # В помощниках шаблона точки учтены; в теле сценария gdb.Breakpoint обходит учёт.
+            if call_name(call) == "Breakpoint" and not inside_function(self, call):
+                self.add("warning", "SC14", call.lineno, "gdb.Breakpoint мимо breakpoint_at()/reach(): точка не снимется "
+                         "в finally, и после прерванного сценария ядро остановится на ней")
+        self.check_python38()
         for node in ast.walk(self.tree):
             if isinstance(node, ast.While) and isinstance(node.test, ast.Constant) and node.test.value is True:
                 self.add("warning", "SC08", node.lineno, "while True: нужен потолок итераций (for _ in range(N))")
         if "SCENARIO_RESULT" not in self.text:
             self.add("error", "SC12", 1, "итог не пишется в SCENARIO_RESULT: сценарий не от шаблона")
+
+    def check_python38(self):
+        """GDB на узле бывает собран с Python 3.8: конструкции 3.9+ падают уже на месте."""
+        for node in ast.walk(self.tree):
+            found = None
+            if isinstance(node, ast.Attribute) and node.attr in ("removesuffix", "removeprefix"):
+                found = "str.%s (3.9)" % node.attr
+            elif type(node).__name__ == "Match":
+                found = "match (3.10)"
+            elif isinstance(node, (ast.arg, ast.AnnAssign, ast.FunctionDef)):
+                note = getattr(node, "annotation", None) or getattr(node, "returns", None)
+                if note is not None and any(isinstance(n, ast.BinOp) and isinstance(n.op, ast.BitOr)
+                                            for n in ast.walk(note)):
+                    found = "аннотация X | Y (3.10)"
+            elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr) and \
+                    any(isinstance(side, ast.Dict) for side in (node.left, node.right)):
+                found = "dict | dict (3.9)"
+            if found:
+                self.add("warning", "SC13", node.lineno, "%s: GDB с Python 3.8 (Ubuntu 20.04 и др.) этого не "
+                         "выполнит; проверка: arm-none-eabi-gdb-py3 -batch -ex \"python import sys; print(sys.version)\""
+                         % found)
 
     def expressions(self):
         """[(строка, функция, выражение, функции reach выше по файлу)] для сверки с ELF."""

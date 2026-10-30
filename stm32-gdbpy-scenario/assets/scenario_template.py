@@ -2,6 +2,7 @@
 
 Исполняется внутри GDB с Python (`source`), обычно через scripts/run_scenario.py. Копируйте файл
 и меняйте только раздел «Сценарий»; вспомогательные функции не трогайте без причины.
+Совместим с Python 3.8: GDB на узле стенда (Ubuntu 20.04) бывает собран со старым Python.
 
 Переменные запускателя (полная таблица — SKILL.md, раздел 3.3):
   SCENARIO_GDB_HOST, SCENARIO_GDB_PORT  куда подключаться (target remote)
@@ -23,6 +24,7 @@ import gdb
 checks = {}
 records = []
 originals = {}
+breakpoints = []  # точки сценария: снимаются в finally, даже если сценарий прервался
 
 
 def step(name):
@@ -77,6 +79,9 @@ def running_window():
     if SERVER not in WINDOW:
         raise RuntimeError("окно работы без остановки нужно OpenOCD или J-Link GDB Server, а сервер: " + SERVER)
     monitor(WINDOW[SERVER][0])
+    # Пробное чтение регистра ядра: на части плат первое чтение после запуска давало нули (причина
+    # не установлена), поэтому первым читается не наблюдаемое значение.
+    read_running(DHCSR)
     try:
         yield
     finally:
@@ -84,7 +89,12 @@ def running_window():
 
 
 def read_running(address):
-    """32-битное слово по адресу чтением по SWD (на работающем ядре — внутри running_window)."""
+    """32-битное слово по адресу чтением по SWD (на работающем ядре — внутри running_window).
+
+    Адрес — число, посчитанное по имени до окна: int(gdb.parse_and_eval("&g_app.counter")).
+    """
+    if not isinstance(address, int):
+        raise TypeError("read_running ждёт адрес числом, а получил %r: int(gdb.parse_and_eval(\"&имя\"))" % (address,))
     text = gdb.execute("monitor " + WINDOW[SERVER][2] % address, to_string=True)
     # OpenOCD: «0x20000000: 0000abcd», J-Link: «... (Data = 0x0000ABCD)»; значение — последнее слово.
     return int(re.findall(r"\b(?:0x)?([0-9a-fA-F]{8})\b", text)[-1], 16)
@@ -104,14 +114,51 @@ def core_running(counter_address, pause=0.2):
     return second != first and not dhcsr & DHCSR_S_HALT
 
 
-def reach(symbol, condition=None):
-    # Временная точка перед continue; условие — атрибутом, не аргументом конструктора.
-    point = gdb.Breakpoint(symbol, internal=True, temporary=True)
+def breakpoint_at(spec, condition=None, temporary=False):
+    """Точка останова сценария; снимается в finally. Условие — атрибутом, не аргументом конструктора."""
+    point = gdb.Breakpoint(spec, internal=True, temporary=temporary)
     if condition:
         point.condition = condition
+    breakpoints.append(point)
+    return point
+
+
+def remove_breakpoints():
+    # Внутренние точки не видны команде delete и gdb.breakpoints(): снимаются по своему списку.
+    for point in breakpoints:
+        if point.is_valid():
+            point.delete()
+    del breakpoints[:]
+
+
+def wait_counter(address, delta, tick_address, limit_ticks, polls=2000):
+    """Ждать, пока слово по адресу вырастет на delta, не останавливая ядро; срок — по тикам цели.
+
+    address и tick_address — адреса по именам (например, &g_can.tx_ok и &uwTick), limit_ticks — срок в
+    тиках счётчика tick_address, polls — потолок чтений. Возвращает (дождались, последнее значение).
+    """
+    with running_window():
+        start, first_tick = read_running(address), read_running(tick_address)
+        value = start
+        for _ in range(polls):
+            value = read_running(address)
+            if (value - start) & 0xFFFFFFFF >= delta:
+                return True, value
+            if (read_running(tick_address) - first_tick) & 0xFFFFFFFF >= limit_ticks:
+                break
+    return False, value
+
+
+def reach(symbol, condition=None):
+    # Временная точка перед continue: без неё GDB ждёт остановки бесконечно.
+    breakpoint_at(symbol, condition, temporary=True)
     gdb.execute("continue")
     frame = gdb.newest_frame().name() or ""
-    return frame.removesuffix("()") == symbol.removesuffix("()")
+    return plain(frame) == plain(symbol)
+
+
+def plain(name):
+    return name[:-2] if name.endswith("()") else name
 
 
 def restore():
@@ -157,6 +204,10 @@ except Exception:
     status = "ERROR"
 finally:
     try:
+        remove_breakpoints()
+    except Exception:
+        traceback.print_exc()
+    try:
         restored = restore() if originals else None
     except Exception:
         traceback.print_exc()
@@ -168,9 +219,9 @@ finally:
                    "records": records, "restored": restored}, stream, ensure_ascii=False, indent=2)
     if environment == "hardware":
         try:
-            # Плату оставляем работающей: detach при остановленном ядре оставит её в halt.
-            # OpenOCD: continue & и detach; J-Link GDB Server: monitor go и disconnect.
-            for command in os.environ.get("SCENARIO_FINISH", "continue &|detach").split("|"):
+            # Плату оставляем работающей: detach у OpenOCD ядро не запускает. OpenOCD: monitor resume и
+            # detach (GDB не вставляет точки, забытая точка не остановит ядро); J-Link: monitor go и disconnect.
+            for command in os.environ.get("SCENARIO_FINISH", "monitor resume|detach").split("|"):
                 gdb.execute(command)
         except Exception:
             traceback.print_exc()

@@ -452,5 +452,6 @@ python stm32-gdbpy-scenario/scripts/run_scenario.py --environment-from build/env
 | Симптом | Что делать |
 | :--- | :--- |
 | `образ во Flash не соответствует ELF: первое расхождение 0x…` | на плате другая сборка: прошить эту или взять ELF прошитой |
+| `ядро осталось в HALTED после прогона` | забытая точка или финал без запуска: `ocd.py ... resume`; в сценарии точки — через `breakpoint_at()`/`reach()`; `--after-check resume` запускает ядро сам |
 | `сценарий нарушает правила стиля` | адрес или смещение заменить именем из ELF (`references/elf-symbols.md`); зафиксированная раскладка — отметка `# scenario: allow-offset: <причина>` |
 
