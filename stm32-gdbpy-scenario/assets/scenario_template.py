@@ -57,6 +57,10 @@ def monitor(command):
     return text
 
 
+# Регистр ядра, а не объект прошивки: адрес задан архитектурой (ARMv7-M ARM, C1.6.2 DHCSR).
+DHCSR = 0xE000EDF0
+DHCSR_S_HALT = 1 << 17
+
 SERVER = os.environ.get("SCENARIO_SERVER", "openocd")
 # Команды окна работы на языке сервера: OpenOCD — resume/halt/mdw, J-Link GDB Server — go/halt/memU32.
 WINDOW = {"openocd": ("resume", "halt", "mdw 0x%08X"), "jlink": ("go", "halt", "memU32 0x%08X")}
@@ -95,9 +99,9 @@ def core_running(counter_address, pause=0.2):
         first = read_running(counter_address)
         time.sleep(pause)
         second = read_running(counter_address)
-        dhcsr = read_running(0xE000EDF0)
+        dhcsr = read_running(DHCSR)
     record("core_running", {"counter": [first, second], "dhcsr": "0x%08X" % dhcsr})
-    return second != first and not dhcsr & (1 << 17)
+    return second != first and not dhcsr & DHCSR_S_HALT
 
 
 def reach(symbol, condition=None):
@@ -138,6 +142,8 @@ try:
     step("main")
     check("main reached", reach("main"))
     # Пример: исходное состояние, действие, наблюдаемый результат, соседний признак.
+    # Имена — из ELF (references/elf-symbols.md), ожидаемые числа — из enum прошивки или констант
+    # с ссылкой на требование; проверка стиля — scripts/check_scenario.py.
     # before = read("g_app.counter")
     # write("g_app.mode", 1)
     # check("handler reached", reach("app_handle_mode"))

@@ -66,6 +66,11 @@ def restore():
     return all(read(expr) == value for expr, value in originals.items())
 
 
+# Ожидаемые значения — из описания зонда, а не из ответа платы (stm32-skills-probe, src/probe.h).
+PROBE_STATE_READY = 0xA5    # probe_state после инициализации
+PERIOD_DEFAULT_MS = 100     # период кадров по умолчанию
+PERIOD_FAST_MS = 20         # новый период, который задаёт сценарий
+
 environment = os.environ.get("SCENARIO_ENVIRONMENT", "hardware")
 # Сброс с остановкой на языке сервера: OpenOCD — reset halt, J-Link GDB Server — reset.
 reset_halt = os.environ.get("SCENARIO_RESET_HALT", "reset halt")
@@ -86,11 +91,11 @@ try:
         monitor(reset_halt)
     step("main")
     check("main reached", reach("main"))
-    check("probe_state not set before init", read("probe_state") != 0xA5)
+    check("probe_state not set before init", read("probe_state") != PROBE_STATE_READY)
 
     step("loop")
     check("probe_loop reached", reach("probe_loop"))
-    check("probe_state set by init", read("probe_state") == 0xA5)
+    check("probe_state set by init", read("probe_state") == PROBE_STATE_READY)
     work = read("probe_work_iterations")
 
     # Вход в кадр k+1 читает время кадра k: probe_telemetry.tick пишется внутри функции.
@@ -104,15 +109,15 @@ try:
     step("baseline")
     reach("probe_emit_frame")
     first, second = frame_tick(), frame_tick()
-    check("baseline period 100 ms", second - first == 100)
+    check("baseline period 100 ms", second - first == PERIOD_DEFAULT_MS)
 
     step("action")
-    write("probe_frame_period_ms", 20)
+    write("probe_frame_period_ms", PERIOD_FAST_MS)
     third, fourth, fifth = frame_tick(), frame_tick(), frame_tick()
-    check("frame already scheduled keeps 100 ms", fourth - third == 100)
-    check("next frame uses 20 ms", fifth - fourth == 20)
+    check("frame already scheduled keeps 100 ms", fourth - third == PERIOD_DEFAULT_MS)
+    check("next frame uses 20 ms", fifth - fourth == PERIOD_FAST_MS)
     check("work iterations untouched", read("probe_work_iterations") == work)
-    check("probe_state untouched", read("probe_state") == 0xA5)
+    check("probe_state untouched", read("probe_state") == PROBE_STATE_READY)
     # ------------------------------------------------------------------------
 
     status = "PASS" if checks and all(checks.values()) else "FAIL"

@@ -52,7 +52,9 @@
     <div class="flow">
       <div class="node"><h3>GDB с Python</h3><p>принимается только GDB, выполнивший <code>python print(6 * 7)</code></p><span class="mono">run_scenario.py --check-gdb</span></div>
       <div class="arrow">и</div>
-      <div class="node"><h3>Опознание окружения</h3><p>все отладчики здесь и на узле: тип, серийник или место USB, прошивка, напряжение, DEV_ID; отчёт, выбор пользователя, отпечаток</p><span class="mono">environment.py --ssh user@stand --identify</span></div>
+      <div class="node"><h3>Опознание окружения</h3><p>все отладчики здесь и на узле: тип, серийник или место USB, прошивка, напряжение, DEV_ID, хеш UID; отчёт, выбор пользователя, отпечаток</p><span class="mono">environment.py --ssh user@stand --identify</span></div>
+      <div class="arrow">и</div>
+      <div class="node"><h3>Проверка сценария</h3><p>имена из ELF вместо адресов и смещений, ожидаемые значения из enum, восстановление записанного</p><span class="mono">check_scenario.py --elf app.elf</span></div>
       <div class="arrow">и</div>
       <div class="node"><h3>Бюджет</h3><p>таймауты сервера и GDB, потолок итераций, ожидание по тикам цели</p><span class="mono">--timeout 60</span></div>
     </div>
@@ -67,6 +69,8 @@
       <div class="node"><h3>J-Link GDB Server</h3><p>сервер SEGGER, имя МК из базы SEGGER</p><span class="mono">--jlink-device AT32F403ACGU7</span></div>
       <div class="arrow">или</div>
       <div class="node"><h3>Узел стенда</h3><p>сервер на узле через <code>nohup</code>, SSH-туннель, после прогона — kill своего pid</p><span class="mono">--ssh user@stand</span></div>
+      <div class="arrow">ELF</div>
+      <div class="node"><h3>Сверка образа</h3><p>секции ELF против Flash чтением через GDB-сервер; чужая сборка — ERROR до сценария</p><span class="mono">--image-check full</span></div>
       <div class="arrow">GDB</div>
       <div class="node"><h3>Сценарий gdb-py</h3><p>шаблон: check, reach, read, write, monitor, record</p><span class="mono">gdb -nx -batch app.elf -ex "source ..."</span></div>
     </div>
@@ -143,6 +147,8 @@ python scripts/jlink.py --ssh user@stand --device AT32F403ACGU7 \
     <div class="fact"><b>Проверять наблюдаемое</b>Ключ питания — намерение прошивки, работу тракта показывает только трафик.</div>
     <div class="fact"><b>J-Link пишет точки во Flash</b>Без <code>monitor flash breakpoints = 0</code> J-Link GDB Server ставит программные точки останова записью во Flash. Запускатель включает это сам.</div>
     <div class="fact"><b>Сброс и прошивка — вмешательство</b>Чтение памяти ядро не останавливает, а <code>halt</code>, сброс и запись Flash меняют работу платы. На силовой плате — только после проверки, что стенд тестовый.</div>
+    <div class="fact"><b>Имена, а не числа</b>Адрес переменной и смещение поля устаревают с каждой сборкой. Сценарий читает <code>g_app.stats.errors</code>, а адрес для чтения на ходу считает GDB: <code>&amp;g_app.counter</code>. Смещение — только для шага по массиву или с отметкой разработчика.</div>
+    <div class="fact"><b>DEV_ID — не прошивка</b>DEV_ID и UID говорят о кристалле. Что на плате та же сборка, что ELF, показывает только сверка образа; <code>verify_image</code> для этого не годится: он исполняет код в ОЗУ цели.</div>
     <div class="fact"><b>Пробник по USB-адресу</b>ST-Link V2 со старой прошивкой отдаёт нечитаемый серийник: <code>--adapter-usb-location 7-1.1.3</code>.</div>
     <div class="fact"><b>Windows и порты</b>Фиксированный порт может попасть в диапазон, зарезервированный системой; запускатель берёт порт, выданный ОС.</div>
   </div>
@@ -152,6 +158,7 @@ python scripts/jlink.py --ssh user@stand --device AT32F403ACGU7 \
   <h2>Насколько проверено</h2>
   <div class="cols" style="margin-bottom:0">
     <div><h3 style="color: var(--success)">Проверено на стендах 28–30.10.2026</h3><ul>
+      <li>30.10, версия 1.4.0: сверка образа на F411CE (своя сборка — совпадение, чужая — отказ до сценария), хеш UID в отчёте всех STM32 узла, запуск по отчёту окружения</li>
       <li>30.10, версия 1.3.0: опознание шести отладчиков узла (ST-Link V2 с нечитаемым серийником, J-Link с AT32), выбор по DEV_ID и типу; окно работы без остановки на пяти STM32 и AT32</li>
       <li>BlackPill F411CE локально (Windows) и по SSH: команды, сценарий по адресам, копия Flash, прошивка зонда, сценарий зонда, возврат образа с совпавшим хешем</li>
       <li>F401CC и Blue Pill F103C8 по SSH: то же</li>
@@ -159,7 +166,7 @@ python scripts/jlink.py --ssh user@stand --device AT32F403ACGU7 \
       <li>AT32F403A за J-Link по SSH: JLinkExe и OpenOCD, сценарий через J-Link GDB Server и OpenOCD</li>
     </ul></div>
     <div><h3 style="color: var(--attention)">CI и открытые вопросы</h3><ul>
-      <li>CI: пример зонда в Renode и четыре исхода шаблона (PASS, FAIL, ERROR с возвратом, TIMEOUT)</li>
+      <li>CI: пример зонда в Renode и четыре исхода шаблона (PASS, FAIL, ERROR с возвратом, TIMEOUT); правила стиля сценария и отказ запуска при их нарушении</li>
       <li>нулевое чтение сразу после прошивки (повторилось 30.10 в общем прогоне, не в отдельном) — причина не установлена, готовность проверяется переменной прошивки</li>
       <li>прошивка AT32 через OpenOCD не проверялась: драйвер Flash не опознал МК</li>
     </ul></div>

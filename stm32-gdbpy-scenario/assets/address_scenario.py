@@ -4,6 +4,7 @@
 подключении GDB, сброс с остановкой на векторе сброса (SCENARIO_FLASH — начало Flash)
 и шаг stepi. После сценария плата продолжает работу с начала прошивки.
 """
+# scenario: addresses-allowed: пример без ELF — символов нет, только адреса и регистры
 import json
 import os
 import traceback
@@ -64,6 +65,13 @@ def restore():
     return all(read(expr) == value for expr, value in originals.items())
 
 
+# Регистр ядра: адрес задан архитектурой (ARMv7-M ARM, C1.6.2 DHCSR).
+DHCSR = 0xE000EDF0
+DHCSR_S_HALT = 1 << 17
+# Таблица векторов — упорядоченный набор: слово 0 — начальный SP, слово 1 — вектор сброса.
+VECTOR_SP, VECTOR_RESET = 0, 1
+WORD = 4
+
 environment = os.environ.get("SCENARIO_ENVIRONMENT", "hardware")
 # Сброс с остановкой на языке сервера: OpenOCD — reset halt, J-Link GDB Server — reset.
 reset_halt = os.environ.get("SCENARIO_RESET_HALT", "reset halt")
@@ -91,13 +99,13 @@ try:
         check("DEV_ID %s" % expected, dev_id == int(expected, 0))
 
     step("attach")
-    check("core halted after attach", read("*(unsigned int *)0xE000EDF0") & (1 << 17))
+    check("core halted after attach", read("*(unsigned int *)%d" % DHCSR) & DHCSR_S_HALT)
 
     step("reset halt")
     monitor(reset_halt)
     pc = read("$pc")
-    check("PC at reset vector", pc == read("*(unsigned int *)%d" % (flash + 4)) & ~1)
-    check("SP from vector table", read("$sp") == read("*(unsigned int *)%d" % flash))
+    check("PC at reset vector", pc == read("*(unsigned int *)%d" % (flash + VECTOR_RESET * WORD)) & ~1)
+    check("SP from vector table", read("$sp") == read("*(unsigned int *)%d" % (flash + VECTOR_SP * WORD)))
 
     step("stepi")
     gdb.execute("stepi 3")

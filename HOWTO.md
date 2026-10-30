@@ -440,3 +440,17 @@ ST-Link V2 (`0483:3748`) отдаёт серийник байтами — выб
 (`--adapter-usb-location 7-1.1.3`). Подключение GDB останавливает цель: проверку «ядро работает»
 делать `core_running()` из шаблона, а не двумя чтениями через GDB.
 
+Отчёт можно отдать запускателю целиком, а сценарий проверить до платы:
+
+```sh
+python stm32-gdbpy-scenario/scripts/environment.py --ssh user@stand --identify --dev-id 0x431 --json-out build/env.json
+python stm32-gdbpy-scenario/scripts/check_scenario.py tests/my_scenario.py --elf build/app.elf
+python stm32-gdbpy-scenario/scripts/run_scenario.py --environment-from build/env.json --elf build/app.elf \
+    --scenario tests/my_scenario.py --out build/scenario/run1
+```
+
+| Симптом | Что делать |
+| :--- | :--- |
+| `образ во Flash не соответствует ELF: первое расхождение 0x…` | на плате другая сборка: прошить эту или взять ELF прошитой |
+| `сценарий нарушает правила стиля` | адрес или смещение заменить именем из ELF (`references/elf-symbols.md`); зафиксированная раскладка — отметка `# scenario: allow-offset: <причина>` |
+

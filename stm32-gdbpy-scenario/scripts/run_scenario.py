@@ -16,8 +16,15 @@
   # готовый сервер или SSH-туннель к удалённому OpenOCD
   python run_scenario.py --elf build/app.elf --scenario my_scenario.py --attach 127.0.0.1:13333 --out build/scenario
 
+  # отладчик и аргументы маршрута — из отчёта environment.py (--json-out)
+  python run_scenario.py --environment-from build/env.json --elf build/app.elf --scenario my_scenario.py --out build/scenario
+
   # только проверить, что GDB понимает Python
   python run_scenario.py --check-gdb
+
+На плате с --elf до сценария сверяется образ: секции ELF в области кода против Flash
+(--image-check, по умолчанию full). Расхождение или несостоявшаяся сверка — ERROR, сценарий не
+запускается: символы чужой сборки дали бы бессмысленные числа.
 
 Сценарий получает переменные SCENARIO_* (таблица — SKILL.md, раздел 3.3) и пишет JSON в
 SCENARIO_RESULT (шаблон — assets/scenario_template.py). Итог прогона — <out>/run.json, на экране —
@@ -41,6 +48,8 @@ GDB_NAMES = ("arm-none-eabi-gdb-py3", "arm-none-eabi-gdb", "gdb-multiarch")
 # Как в навыке stm32-renode-emulator: синхронный журнал Renode не теряет строк.
 RENODE_CONFIG = "[general]\nuse-synchronous-logging = True\ncollapse-repeated-log-entries = False\n"
 READY_S = 30
+IMAGE_TIMEOUT_S = 90
+HERE = Path(__file__).resolve().parent
 STEP = re.compile(r"^STEP (.+)$", re.M)
 
 
@@ -211,6 +220,9 @@ def openocd_args(args, port):
 
 
 HOME_PREFIXES = ("~/", "$HOME/", "${HOME}/")
+# Аргументы маршрута: при --environment-from их даёт отчёт окружения, а не командная строка.
+ROUTE_OPTIONS = {"--ssh", "--ssh-key", "--openocd", "--openocd-config", "--openocd-transport", "--adapter-serial",
+                 "--adapter-usb-location", "--attach", "--jlink-device", "--renode-platform"}
 
 
 def remote_path(path):
@@ -287,6 +299,71 @@ def remote_server(args, out, local_port, executable, argv, marker):
     return remote, "127.0.0.1", local_port
 
 
+def image_mode(args):
+    """full | build-id | off | not-needed | no-elf.
+
+    В эмуляторе сверка не нужна и не выполняется: модель загрузила тот же ELF, а отключение GDB
+    после сверки запустило бы модель раньше сценария.
+    """
+    if args.image_check == "off":
+        return "off"
+    if not args.elf:
+        return "no-elf"
+    if args.renode_platform or args.environment == "emulator":
+        return "not-needed"
+    return "full" if args.image_check == "auto" else args.image_check
+
+
+def check_image(args, gdb, env, out):
+    """Отдельный сеанс GDB до сценария: секции ELF (или build-id) против памяти цели."""
+    mode = image_mode(args)
+    if mode not in ("full", "build-id"):
+        return {"status": mode}
+    result_path = out / "image.json"
+    env = dict(env, IMAGE_ELF=str(Path(args.elf).resolve()), IMAGE_MODE=mode, IMAGE_HELPERS=str(HERE),
+               IMAGE_RESULT=str(result_path))
+    command = [gdb, "-nx", "-batch", str(args.elf), "-ex", "source " + (HERE / "image_check.py").as_posix()]
+    args.commands["image"] = subprocess.list2cmdline(command)
+    if args.print_command:
+        print("IMAGE " + args.commands["image"], flush=True)
+    with (out / "image.log").open("w", encoding="utf-8") as log:
+        flags = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
+                 else {"start_new_session": True})
+        process = subprocess.Popen(command, env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                                   **flags)
+        try:
+            process.wait(timeout=IMAGE_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            stop(process)
+            return {"status": "unknown", "mode": mode, "error": "сверка не уложилась в %d с" % IMAGE_TIMEOUT_S}
+    if not result_path.exists():
+        return {"status": "unknown", "mode": mode, "error": "GDB не записал итог сверки (image.log)"}
+    return json.loads(result_path.read_text(encoding="utf-8"))
+
+
+def image_error(image):
+    if image["status"] == "mismatch":
+        diff = image["first_diff"]
+        return ("образ во Flash не соответствует ELF: первое расхождение %s (%s), ожидалось %s, прочитано %s; "
+                "прошейте эту сборку или возьмите ELF прошитой" % (diff["address"], diff["section"],
+                                                                  diff["expected"], diff["actual"]))
+    return "образ во Flash не сверен: %s; повторите или явно отключите --image-check off" % image.get("error")
+
+
+def check_style(args):
+    """Правила стиля сценария (check_scenario.py) до запуска сервера; имена — по таблице символов ELF."""
+    if args.style == "off":
+        return {"mode": "off"}
+    sys.path.insert(0, str(HERE))
+    import check_scenario
+    result = check_scenario.check(args.scenario, args.elf, None)
+    shown = [f for f in result["findings"] if f["level"] != "info"]
+    for item in shown:
+        print("СТИЛЬ %s %s строка %d: %s" % (check_scenario.LEVELS[item["level"]], item["rule"], item["line"],
+                                           item["message"]), flush=True)
+    return {"mode": args.style, "errors": result["errors"], "warnings": result["warnings"], "findings": shown}
+
+
 def run(args):
     out = Path(args.out).resolve()
     if out.exists() and any(out.iterdir()):
@@ -296,10 +373,17 @@ def run(args):
     started = time.monotonic()
     summary = {"status": "ERROR", "environment": None, "checks": {}, "records": [],
                "started_utc": datetime.now(timezone.utc).isoformat(), "elf": str(args.elf) if args.elf else None,
-               "scenario": str(args.scenario), "gdb": gdb, "timeout_s": args.timeout}
+               "scenario": str(args.scenario), "gdb": gdb, "timeout_s": args.timeout,
+               "elf_sha256": elf_sha256(args.elf), "fingerprint": args.fingerprint}
     server = None
     args.commands = summary["commands"] = {}
     try:
+        summary["style"] = check_style(args)
+        if args.style == "strict" and summary["style"]["errors"]:
+            first = next(f for f in summary["style"]["findings"] if f["level"] == "error")
+            raise RuntimeError("сценарий нарушает правила стиля (%d): %s строка %d — %s; разбор: check_scenario.py, "
+                               "разрешение разработчика — отметка # scenario: allow-..." %
+                               (summary["style"]["errors"], first["rule"], first["line"], first["message"][:160]))
         server, host, port, environment, described = backend(args, out)
         summary.update(environment=environment, backend=described)
         env = dict(os.environ, SCENARIO_GDB_HOST=host, SCENARIO_GDB_PORT=str(port),
@@ -308,6 +392,9 @@ def run(args):
                    SCENARIO_SETUP=getattr(args, "server_setup", ""),
                    SCENARIO_FINISH=getattr(args, "server_finish", "continue &|detach"),
                    SCENARIO_SERVER=args.server_kind)
+        summary["image"] = check_image(args, gdb, env, out)
+        if summary["image"]["status"] in ("mismatch", "unknown"):
+            raise RuntimeError(image_error(summary["image"]))
         # Список аргументов без оболочки: путь с пробелом не разваливает -ex "source ...".
         # Без ELF GDB работает по адресам: символов нет, сценарий читает память и регистры.
         command = [gdb, "-nx", "-batch"] + ([str(args.elf)] if args.elf else [])
@@ -350,8 +437,17 @@ def run(args):
     for name, passed in summary["checks"].items():
         print(("PASS " if passed else "FAIL ") + name)
     print(summary_line(summary))
+    if summary.get("fingerprint"):
+        print("отпечаток: %s" % summary["fingerprint"])
     print("прогон: %s" % (out / "run.json"))
     return {"PASS": 0, "FAIL": 1}.get(summary["status"], 2)
+
+
+def elf_sha256(path):
+    if not path:
+        return None
+    import hashlib
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
 def first_cause(out):
@@ -375,6 +471,11 @@ def summary_line(summary):
                                          summary.get("elapsed_s", 0))
     if summary.get("restored") is not None:
         line += ", восстановление %s" % ("подтверждено" if summary["restored"] else "НЕ подтверждено")
+    image = (summary.get("image") or {}).get("status")
+    if image == "match":
+        line += ", образ совпадает с ELF"
+    elif image == "off":
+        line += ", образ НЕ сверен (--image-check off)"
     if summary["status"] == "TIMEOUT":
         line += "; последний шаг: %s" % summary.get("last_step")
     elif summary.get("error"):
@@ -416,7 +517,26 @@ def main():
     parser.add_argument("--check-gdb", action="store_true", help="только проверить GDB с Python")
     parser.add_argument("--print-command", action="store_true",
                         help="печатать команды сервера и GDB до запуска (они всегда пишутся в run.json)")
-    args = parser.parse_args()
+    parser.add_argument("--image-check", choices=("auto", "full", "build-id", "off"), default="auto",
+                        help="сверка Flash с ELF до сценария: auto — full на плате, нет в эмуляторе; "
+                             "build-id — только build-id, если он есть; off — без сверки (так и пишется в итог)")
+    parser.add_argument("--style", choices=("strict", "warn", "off"), default="strict",
+                        help="правила стиля сценария до запуска: strict — ошибка правила отменяет прогон (умолчание)")
+    parser.add_argument("--environment-from", type=Path, metavar="JSON",
+                        help="отчёт environment.py --json-out: аргументы маршрута и отпечаток выбранного отладчика")
+    argv = sys.argv[1:]
+    known, _ = parser.parse_known_args(argv)
+    fingerprint = None
+    if known.environment_from:
+        route = [a for a in argv if a.split("=")[0] in ROUTE_OPTIONS]
+        if route:
+            parser.error("--environment-from задаёт маршрут сам; уберите %s" % ", ".join(sorted(set(route))))
+        report = json.loads(known.environment_from.read_text(encoding="utf-8"))
+        if not report.get("runner_args"):
+            parser.error("в отчёте нет выбранного отладчика (runner_args): уточните выбор в environment.py")
+        argv, fingerprint = report["runner_args"] + argv, report.get("selected")
+    args = parser.parse_args(argv)
+    args.fingerprint = fingerprint
     if args.check_gdb:
         print("GDB с Python: " + find_gdb(args.gdb))
         return 0

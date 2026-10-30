@@ -501,7 +501,7 @@ def check_gdbpy_environment():
         raise RuntimeError("J-Link log: %s" % jl)
     probe = {"place": "remote", "host": "user@stand", "kind": "stlink", "serial": None, "location": "7-1.1.3",
              "firmware": "V2J17S4", "dev_id": "0x419", "target": "stm32f4x"}
-    if environment.fingerprint(probe) != "remote:user@stand|stlink|usb:7-1.1.3|V2J17S4|0x419":
+    if environment.fingerprint(probe) != "remote:user@stand|stlink|usb:7-1.1.3|V2J17S4|0x419|-":
         raise RuntimeError("fingerprint: %s" % environment.fingerprint(probe))
     args = type("A", (), {"ssh_key": None, "openocd_remote": "~/ocd/bin/openocd"})()
     if environment.runner_args(args, probe)[-2:] != ["--adapter-usb-location", "7-1.1.3"]:
@@ -515,7 +515,109 @@ def check_gdbpy_environment():
     line = run_scenario.summary_line({"status": "FAIL", "checks": {"a": True, "b": False}, "elapsed_s": 8.6})
     if line != "FAIL: проверок 1/2, 8.6 с; не прошли: b":
         raise RuntimeError("summary: %s" % line)
-    return "probe types, old ST-Link firmware, Cortex-M0 IDCODE, J-Link errors, fingerprint, paths, summary"
+    uid = environment.parse_identify("0xe000ed00: 410fc241 \n0xe0042000: 10006431 \n"
+                                     "0x1fff7a10: 00410037 3235510d 37383836 \n")
+    if not re.fullmatch(r"uid#[0-9a-f]{8}", uid.get("uid", "")) or "37383836" in json.dumps(uid):
+        raise RuntimeError("UID must be hashed: %s" % uid)
+    if not environment.fingerprint(dict(probe, uid=uid["uid"])).endswith("|0x419|" + uid["uid"]):
+        raise RuntimeError("fingerprint with UID")
+    if "array set u" not in " ".join(environment.identify_command(probe, "openocd")):
+        raise RuntimeError("identify command must read UID")
+    return "probe types, old ST-Link firmware, Cortex-M0 IDCODE, J-Link errors, fingerprint, UID hash, paths, summary"
+
+
+def tiny_elf(text, data, build_id=None):
+    """ELF32 Cortex-M из трёх секций: .text во Flash, .data с LMA во Flash и VMA в ОЗУ, .bss."""
+    import struct
+    names = b"\0.text\0.data\0.bss\0.note.gnu.build-id\0.shstrtab\0"
+    note = struct.pack("<III", 4, len(build_id), 3) + b"GNU\0" + build_id if build_id else b""
+    body_off = 52 + 32 * 2
+    text_off, note_off = body_off, body_off + len(text)
+    data_off = note_off + len(note)
+    names_off = data_off + len(data)
+    sh_off = (names_off + len(names) + 3) & ~3
+    flash, ram = 0x08000000, 0x20000000
+    phdrs = struct.pack("<8I", 1, text_off, flash, flash, len(text) + len(note), len(text) + len(note), 5, 4)
+    phdrs += struct.pack("<8I", 1, data_off, ram, flash + len(text) + len(note), len(data), len(data) + 16, 6, 4)
+    sections = [struct.pack("<10I", *([0] * 10)),
+                struct.pack("<10I", 1, 1, 6, flash, text_off, len(text), 0, 0, 4, 0),
+                struct.pack("<10I", 7, 1, 3, ram, data_off, len(data), 0, 0, 4, 0),
+                struct.pack("<10I", 13, 8, 3, ram + len(data), data_off + len(data), 16, 0, 0, 4, 0),
+                struct.pack("<10I", 18, 7, 2, flash + len(text), note_off, len(note), 0, 0, 4, 0),
+                struct.pack("<10I", 37, 3, 0, 0, names_off, len(names), 0, 0, 1, 0)]
+    header = b"\x7fELF\x01\x01\x01" + b"\0" * 9 + struct.pack("<HHIIIIIHHHHHH", 2, 40, 1, flash, 52, sh_off, 0x05000200,
+                                                                52, 32, 2, 40, len(sections), 5)
+    blob = header + phdrs + text + note + data + names
+    return blob + b"\0" * (sh_off - len(blob)) + b"".join(sections)
+
+
+def check_gdbpy_style_image():
+    """check_scenario.py по правилам SC и сверка образа elfimage.py на синтетическом ELF, без GDB и платы."""
+    sys.path.insert(0, str(GDBPY_SKILL / "scripts"))
+    import check_scenario
+    import elfimage
+    import run_scenario
+    for asset in sorted((GDBPY_SKILL / "assets").glob("*.py")):
+        result = check_scenario.check(asset)
+        if result["errors"] or result["warnings"]:
+            raise RuntimeError("%s: %s" % (asset.name, result["findings"]))
+    template = (GDBPY_SKILL / "assets" / "scenario_template.py").read_text(encoding="utf-8")
+    section = re.compile(r"(    # -{10,} Сценарий\n).*?(    # -{20,}\n)", re.S)
+    bad = ('    raw = read("*(uint32_t *)0x20000104")\n'
+           '    field = read("*(uint16_t *)((char *)&g_app + 12)")\n'
+           '    base = int(gdb.parse_and_eval("&g_app"))\n    word = read_running(base + 8)\n'
+           '    item = read_running(base + i * 4)\n'
+           '    gpio = read_running(0x40020014)\n    host = "10.1.2.3"\n'
+           '    check("value", read("g_app.mode") == 42)\n')
+    with tempfile.TemporaryDirectory() as folder:
+        path = pathlib.Path(folder) / "bad.py"
+        path.write_text(section.sub(lambda m: m.group(1) + bad + m.group(2), template), encoding="utf-8")
+        found = check_scenario.check(path)
+        rules = sorted({(f["rule"], f["level"]) for f in found["findings"]})
+        expect = [("SC01", "error"), ("SC02", "error"), ("SC04", "error"), ("SC05", "error"), ("SC09", "warning")]
+        lines = sorted(f["line"] for f in found["findings"] if f["rule"] == "SC04")
+        if rules != expect or len(lines) != 2:
+            raise RuntimeError("style rules: %s, offsets at %s" % (rules, lines))
+        allowed = path.read_text(encoding="utf-8").replace(
+            "base + 8)", "base + 8)  # scenario: allow-offset: раскладка зафиксирована в протоколе")
+        path.write_text(allowed, encoding="utf-8")
+        if len([f for f in check_scenario.check(path)["findings"] if f["rule"] == "SC04" and f["level"] == "error"]) != 1:
+            raise RuntimeError("allow-offset marker ignored")
+        elf_path = pathlib.Path(folder) / "app.elf"
+        elf_path.write_bytes(tiny_elf(b"\x11" * 64, b"\x22" * 8, build_id=b"\xab" * 20))
+        elf = elfimage.Elf(elf_path)
+        layout = [(name, hex(address), len(body)) for name, address, body in elf.flash_sections()]
+        if layout != [(".text", "0x8000000", 64), (".note.gnu.build-id", "0x8000040", 36), (".data", "0x8000064", 8)]:
+            raise RuntimeError("flash sections: %s" % layout)
+        if elf.build_id() != (0x08000050, b"\xab" * 20):
+            raise RuntimeError("build-id: %s" % (elf.build_id(),))
+        flash = bytearray(0x200)
+        for _, address, body in elf.flash_sections():
+            flash[address - 0x08000000:address - 0x08000000 + len(body)] = body
+        def read(address, length):
+            return bytes(flash[address - 0x08000000:address - 0x08000000 + length])
+        if elfimage.compare(read, elf.flash_sections())["status"] != "match":
+            raise RuntimeError("compare: own image")
+        flash[0x66] ^= 0xFF
+        diff = elfimage.compare(read, elf.flash_sections(), chunk=4)
+        if diff["status"] != "mismatch" or diff["first_diff"]["address"] != "0x08000066" or \
+                diff["first_diff"]["section"] != ".data":
+            raise RuntimeError("compare: mismatch %s" % diff)
+    args = type("A", (), {"image_check": "auto", "elf": "app.elf", "renode_platform": None, "environment": None})()
+    modes = [run_scenario.image_mode(args)]
+    args.renode_platform = "board.repl"
+    modes.append(run_scenario.image_mode(args))
+    args.image_check = "full"
+    modes.append(run_scenario.image_mode(args))
+    args.renode_platform, args.image_check = None, "build-id"
+    modes.append(run_scenario.image_mode(args))
+    if modes != ["full", "not-needed", "not-needed", "build-id"]:
+        raise RuntimeError("image modes: %s" % modes)
+    line = run_scenario.summary_line({"status": "PASS", "checks": {"a": True}, "elapsed_s": 2.0,
+                                      "image": {"status": "match"}})
+    if line != "PASS: проверок 1/1, 2.0 с, образ совпадает с ELF":
+        raise RuntimeError("summary: %s" % line)
+    return "assets clean, SC01/02/04/05/09 and allow-offset, ELF sections with LMA, build-id, mismatch address"
 
 
 def check_gdbpy_jlink():
@@ -562,6 +664,7 @@ KITS = [
     ("stm32-gdbpy-scenario: ocd.py parsing", check_gdbpy_ocd),
     ("stm32-gdbpy-scenario: jlink.py parsing", check_gdbpy_jlink),
     ("stm32-gdbpy-scenario: environment and runner helpers", check_gdbpy_environment),
+    ("stm32-gdbpy-scenario: scenario style and image check", check_gdbpy_style_image),
     ("stm32-renode-emulator: renode_compat", check_renode_compat),
     ("weact-logic-analyzer: capture integrity", check_weact_integrity),
     ("weact-logic-analyzer: self-test", check_weact),
@@ -777,7 +880,7 @@ class Emulation(object):
             raise RuntimeError("counter %(A)d -> %(B)d, frames %(F)d -> %(G)d, state %(S)#x" % values)
         return "probe_counter %(A)d -> %(B)d, frames %(F)d -> %(G)d, probe_state %(S)#x" % values
 
-    def gdbpy_run(self, name, scenario, timeout=60):
+    def gdbpy_run(self, name, scenario, timeout=60, extra=()):
         """run_scenario.py навыка stm32-gdbpy-scenario: Renode с GDB-сервером, зонд F411CE."""
         out = OUT / ("gdbpy-%s" % name)
         if out.exists():
@@ -785,7 +888,7 @@ class Emulation(object):
         proc = subprocess.run([sys.executable, "-B", str(GDBPY_SKILL / "scripts" / "run_scenario.py"),
                                "--elf", str(self.elves["F411CE"]), "--scenario", str(scenario),
                                "--renode-platform", str(self.platform("F411CE")), "--renode", str(self.renode),
-                               "--gdb", self.gdb(), "--out", str(out), "--timeout", str(timeout)],
+                               "--gdb", self.gdb(), "--out", str(out), "--timeout", str(timeout)] + list(extra),
                               capture_output=True, text=True, timeout=timeout + 90, env=self.env)
         (OUT / ("gdbpy-%s.log" % name)).write_text(proc.stdout + proc.stderr, encoding="utf-8")
         if not (out / "run.json").is_file():
@@ -799,6 +902,24 @@ class Emulation(object):
                                % (code, result["status"], result.get("restored"), result["checks"]))
         ticks = [item["data"] for item in result["records"]]
         return "%d checks PASS, frame ticks %s, period restored" % (len(result["checks"]), ticks)
+
+    def gdbpy_image_style(self):
+        """В эмуляторе сверка образа не выполняется (модель загрузила тот же ELF); отказ запуска при нарушении стиля."""
+        code, result = self.gdbpy_run("image", GDBPY_SKILL / "assets" / "probe_scenario.py",
+                                      extra=["--image-check", "full"])
+        image = result.get("image") or {}
+        if code != 0 or image.get("status") != "not-needed" or not result.get("elf_sha256"):
+            raise RuntimeError("image check in Renode: exit %d, %s" % (code, image))
+        template = (GDBPY_SKILL / "assets" / "scenario_template.py").read_text(encoding="utf-8")
+        section = re.compile(r"(    # -{10,} Сценарий\n).*?(    # -{20,}\n)", re.S)
+        path = OUT / "gdbpy-variants" / "style.py"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(section.sub(lambda m: m.group(1) + '    raw = read("*(uint32_t *)0x20000104")\n' + m.group(2),
+                                    template), encoding="utf-8")
+        code, refused = self.gdbpy_run("style", path)
+        if code != 2 or "SC01" not in (refused.get("error") or "") or refused.get("backend"):
+            raise RuntimeError("style refusal: exit %d, %s" % (code, refused.get("error")))
+        return "image check not needed in the emulator; scenario with a RAM address refused before the server"
 
     def gdbpy_outcomes(self):
         """Шаблон как есть и три его варианта: итог и код возврата различают FAIL, ERROR и TIMEOUT."""
@@ -1197,6 +1318,7 @@ def main(argv=None):
             ("stm32-diag-record: --list-signals from ELF", emulation.list_signals),
             ("stm32-gdbpy-scenario: probe scenario in Renode F411CE", emulation.gdbpy_probe),
             ("stm32-gdbpy-scenario: PASS/FAIL/ERROR/TIMEOUT outcomes", emulation.gdbpy_outcomes),
+            ("stm32-gdbpy-scenario: image check skipped in Renode, style refusal", emulation.gdbpy_image_style),
         ]
         for name, function in steps:
             runner.check(name, function)

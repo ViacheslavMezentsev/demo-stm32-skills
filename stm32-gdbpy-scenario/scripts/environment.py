@@ -20,6 +20,7 @@ SSH, по желанию опрашивает каждый через OpenOCD (�
 отладчика нет или подходящих несколько, 2 — ошибка запуска (SSH, OpenOCD не найден).
 """
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -71,6 +72,10 @@ DEV_IDS = {
     0x435: ("STM32L43x/44x", "stm32l4x"), 0x415: ("STM32L47x/48x", "stm32l4x"),
     0x450: ("STM32H74x/75x", "stm32h7x"),
 }
+# Уникальный ID кристалла (96 бит) по конфигу цели: адрес из Reference Manual серии (раздел
+# «Unique device ID register»). По нему видно, что плата сменилась, даже при том же DEV_ID.
+UID_BY_TARGET = {"stm32f0x": 0x1FFFF7AC, "stm32f1x": 0x1FFFF7E8, "stm32f4x": 0x1FFF7A10, "stm32f7x": 0x1FF0F420,
+                 "stm32g0x": 0x1FFF7590, "stm32g4x": 0x1FFF7590, "stm32l4x": 0x1FFF7590, "stm32h7x": 0x1FF1E800}
 CORES = {0xC20: "Cortex-M0", 0xC60: "Cortex-M0+", 0xC23: "Cortex-M3", 0xC24: "Cortex-M4", 0xC27: "Cortex-M7",
          0xD20: "Cortex-M23", 0xD21: "Cortex-M33"}
 # ST-Link V2 до этой версии JTAG-API помечается как устаревший (рекомендация обновить, не запрет).
@@ -218,8 +223,19 @@ def select_args(probe):
     return []
 
 
+def uid_table():
+    """Пары Tcl «DEV_ID адрес UID» для опроса OpenOCD."""
+    return " ".join("%d 0x%08X" % (dev, UID_BY_TARGET[target]) for dev, (_, target) in sorted(DEV_IDS.items())
+                    if target in UID_BY_TARGET)
+
+
+def uid_hash(words):
+    """Короткий хеш UID: различает платы, но сам номер кристалла в отчёт не попадает."""
+    return "uid#" + hashlib.sha256(" ".join(words).lower().encode()).hexdigest()[:8]
+
+
 def identify_command(probe, openocd):
-    """Команда OpenOCD: только init, чтение CPUID и IDCODE, shutdown. Без сброса и записи."""
+    """Команда OpenOCD: только init, чтение CPUID, IDCODE и UID, shutdown. Без сброса и записи."""
     command = [openocd, "-f", INTERFACES[probe["kind"]]] + select_args(probe)
     if probe["kind"] != "stlink":
         command += ["-c", "transport select swd"]
@@ -227,7 +243,12 @@ def identify_command(probe, openocd):
     command += ["-c", "set CPUTAPID 0", "-f", "target/stm32f4x.cfg", "-c", "init",
                 "-c", "mdw 0xE000ED00",
                 "-c", "set p [expr {([lindex [read_memory 0xE000ED00 32 1] 0] >> 4) & 0xFFF}]; "
-                      "if {$p == 0xC20 || $p == 0xC60} {mdw 0x40015800} else {mdw 0xE0042000}",
+                      "if {$p == 0xC20 || $p == 0xC60} {set a 0x40015800} else {set a 0xE0042000}",
+                # Вывод mdw печатается, только если команда последняя в строке -c.
+                "-c", "mdw $a",
+                # UID — по DEV_ID; catch: чтение чужого адреса не обрывает опрос.
+                "-c", "catch {set d [expr {[lindex [read_memory $a 32 1] 0] & 0xFFF}]; "
+                      "array set u {%s}; if {[info exists u($d)]} {echo [mdw $u($d) 3]}}" % uid_table(),
                 "-c", "shutdown"]
     return command
 
@@ -258,6 +279,11 @@ def parse_identify(text):
             info["family"], info["target"] = DEV_IDS.get(dev, (None, None))
             if not info["family"]:
                 info["family"] = "серия не опознана: сверить IDCODE с документацией производителя"
+            uid_address = UID_BY_TARGET.get(info["target"])
+            uid = uid_address and re.search(r"0x%08x:\s+([0-9a-f]{8})\s+([0-9a-f]{8})\s+([0-9a-f]{8})" % uid_address,
+                                            text, re.I)
+            if uid:
+                info["uid"] = uid_hash(uid.groups())
     for pattern, reason in ((r"LIBUSB_ERROR_ACCESS|permission", "нет прав доступа к USB"),
                             (r"LIBUSB_ERROR_BUSY|resource busy|in use", "пробник занят другим процессом"),
                             (r"open failed|unable to open|No J-Link device found|unable to find", "пробник не открылся"),
@@ -294,7 +320,8 @@ def identify(args, probe):
 def fingerprint(probe):
     who = probe["serial"] or ("usb:" + (probe.get("location") or "?"))
     place = "remote:%s" % probe["host"] if probe["place"] == "remote" else "local"
-    return "|".join([place, probe["kind"], who, probe.get("firmware") or "-", probe.get("dev_id") or "-"])
+    return "|".join([place, probe["kind"], who, probe.get("firmware") or "-", probe.get("dev_id") or "-",
+                     probe.get("uid") or "-"])
 
 
 def runner_args(args, probe):
@@ -339,6 +366,7 @@ def report(probes, servers, chosen, args):
             parts += ["%.2f В" % probe["voltage"]] if probe.get("voltage") is not None else []
             if probe.get("dev_id"):
                 parts.append("%s DEV_ID %s %s" % (probe.get("core") or "", probe["dev_id"], probe.get("family") or ""))
+                parts += [probe["uid"]] if probe.get("uid") else []
             elif probe.get("core"):
                 parts.append(probe["core"])
             print("  " + " | ".join(part.strip() for part in parts if part.strip()))
