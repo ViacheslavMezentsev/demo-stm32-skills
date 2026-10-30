@@ -1,11 +1,21 @@
 """Шаблон сценария gdb-py: один прогон — одно действие — проверяемый итог.
 
-Исполняется внутри GDB с Python (`source`), обычно через scripts/run_scenario.py, который
-задаёт SCENARIO_GDB_HOST/PORT, SCENARIO_RESULT и SCENARIO_ENVIRONMENT. Копируйте файл и
-меняйте только раздел «Сценарий»; вспомогательные функции не трогайте без причины.
+Исполняется внутри GDB с Python (`source`), обычно через scripts/run_scenario.py. Копируйте файл
+и меняйте только раздел «Сценарий»; вспомогательные функции не трогайте без причины.
+
+Переменные запускателя (полная таблица — SKILL.md, раздел 3.3):
+  SCENARIO_GDB_HOST, SCENARIO_GDB_PORT  куда подключаться (target remote)
+  SCENARIO_RESULT                       файл итога JSON (обязателен)
+  SCENARIO_ENVIRONMENT                  emulator | hardware; записать в итог то же значение
+  SCENARIO_SERVER                       openocd | jlink | renode | attach
+  SCENARIO_RESET_HALT                   сброс с остановкой на языке сервера
+  SCENARIO_SETUP, SCENARIO_FINISH       команды GDB после подключения и на выходе, через «|»
 """
+import contextlib
 import json
 import os
+import re
+import time
 import traceback
 
 import gdb
@@ -45,6 +55,49 @@ def monitor(command):
     text = gdb.execute("monitor " + command, to_string=True)
     gdb.execute("maintenance flush register-cache")
     return text
+
+
+SERVER = os.environ.get("SCENARIO_SERVER", "openocd")
+# Команды окна работы на языке сервера: OpenOCD — resume/halt/mdw, J-Link GDB Server — go/halt/memU32.
+WINDOW = {"openocd": ("resume", "halt", "mdw 0x%08X"), "jlink": ("go", "halt", "memU32 0x%08X")}
+
+
+@contextlib.contextmanager
+def running_window():
+    """Ядро работает внутри блока, GDB по-прежнему считает цель остановленной.
+
+    Подключение GDB останавливает цель. Внутри окна допустимы только read_running() и monitor():
+    чтения GDB (read, reach, parse_and_eval) — после выхода, когда ядро снова остановлено.
+    Пара monitor resume/halt не рассинхронизирует GDB: он всё время видит остановленную цель.
+    """
+    if SERVER not in WINDOW:
+        raise RuntimeError("окно работы без остановки нужно OpenOCD или J-Link GDB Server, а сервер: " + SERVER)
+    monitor(WINDOW[SERVER][0])
+    try:
+        yield
+    finally:
+        monitor(WINDOW[SERVER][1])
+
+
+def read_running(address):
+    """32-битное слово по адресу чтением по SWD (на работающем ядре — внутри running_window)."""
+    text = gdb.execute("monitor " + WINDOW[SERVER][2] % address, to_string=True)
+    # OpenOCD: «0x20000000: 0000abcd», J-Link: «... (Data = 0x0000ABCD)»; значение — последнее слово.
+    return int(re.findall(r"\b(?:0x)?([0-9a-fA-F]{8})\b", text)[-1], 16)
+
+
+def core_running(counter_address, pause=0.2):
+    """Ядро работает: счётчик (например, &uwTick) растёт, бит S_HALT регистра DHCSR сброшен.
+
+    Окно работы открывается и закрывается внутри: после вызова цель снова остановлена для GDB.
+    """
+    with running_window():
+        first = read_running(counter_address)
+        time.sleep(pause)
+        second = read_running(counter_address)
+        dhcsr = read_running(0xE000EDF0)
+    record("core_running", {"counter": [first, second], "dhcsr": "0x%08X" % dhcsr})
+    return second != first and not dhcsr & (1 << 17)
 
 
 def reach(symbol, condition=None):

@@ -425,3 +425,18 @@ BDCR, но получил ошибку на лишнем resume; успешны�
 Предыстория не гарантирует фиксированного положения первого события, если ещё не накоплена.
 Windows nightly и Linux проверять отдельно: на Ubuntu ARM64 подтверждена CLI 0.7.1.
 [Матрица и ограничения](weact-logic-analyzer/references/linux-validation.md).
+
+## gdb-py: какие отладчики подключены и какой выбрать
+
+Перед сценарием на плате — отчёт об окружении и выбор пользователя, а не серийник из памяти:
+
+```sh
+python stm32-gdbpy-scenario/scripts/environment.py --ssh user@stand --ssh-key ~/.ssh/id_stand \
+    --identify --openocd-remote '~/.local/openocd/bin/openocd'
+python stm32-gdbpy-scenario/scripts/environment.py --ssh user@stand --identify --dev-id 0x431 --emit-args
+```
+
+ST-Link V2 (`0483:3748`) отдаёт серийник байтами — выбирать по месту USB из отчёта
+(`--adapter-usb-location 7-1.1.3`). Подключение GDB останавливает цель: проверку «ядро работает»
+делать `core_running()` из шаблона, а не двумя чтениями через GDB.
+

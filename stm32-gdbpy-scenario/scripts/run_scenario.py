@@ -19,9 +19,9 @@
   # только проверить, что GDB понимает Python
   python run_scenario.py --check-gdb
 
-Сценарий получает окружение SCENARIO_GDB_HOST, SCENARIO_GDB_PORT, SCENARIO_RESULT и
-SCENARIO_ENVIRONMENT и пишет JSON в SCENARIO_RESULT (шаблон — assets/scenario_template.py).
-Итог прогона — <out>/run.json. Код возврата: 0 — PASS, 1 — FAIL, 2 — ERROR или TIMEOUT.
+Сценарий получает переменные SCENARIO_* (таблица — SKILL.md, раздел 3.3) и пишет JSON в
+SCENARIO_RESULT (шаблон — assets/scenario_template.py). Итог прогона — <out>/run.json, на экране —
+сводка «статус, проверки, время, причина». Код возврата: 0 — PASS, 1 — FAIL, 2 — ERROR или TIMEOUT.
 """
 import argparse
 from datetime import datetime, timezone
@@ -130,7 +130,9 @@ def wait_ready(process, log_path, marker):
 
 
 def backend(args, out):
-    """(процесс или None, host, port, окружение, описание)."""
+    """(процесс или None, host, port, окружение, описание); args.server_kind — тип сервера для сценария."""
+    args.server_kind = "attach" if args.attach else "renode" if args.renode_platform else \
+        "jlink" if args.jlink_device else "openocd"
     if args.attach:
         host, _, port = args.attach.rpartition(":")
         return None, host or "127.0.0.1", int(port), args.environment or "hardware", "attach " + args.attach
@@ -152,6 +154,9 @@ def backend(args, out):
         server, host, port = remote_server(args, out, port, executable, argv, marker)
     else:
         command = [find_server(args, executable)] + [part.replace("{PORT}", str(port)) for part in argv]
+        args.commands["server"] = subprocess.list2cmdline(command)
+        if args.print_command:
+            print("SERVER " + args.commands["server"], flush=True)
         server, log = start(command, out / "server.log")
         log.close()
         wait_ready(server, out / "server.log", marker)
@@ -205,10 +210,14 @@ def openocd_args(args, port):
     return command + (["-c", "gdb_port %d" % port] if port else [])
 
 
+HOME_PREFIXES = ("~/", "$HOME/", "${HOME}/")
+
+
 def remote_path(path):
-    """Путь для оболочки узла: ~/ раскрывается в $HOME, остальное экранируется."""
-    if path.startswith("~/"):
-        return '"$HOME"/' + shlex.quote(path[2:])
+    """Путь для оболочки узла: ~/, $HOME/ и ${HOME}/ раскрываются в домашний каталог, остальное экранируется."""
+    for prefix in HOME_PREFIXES:
+        if path.startswith(prefix):
+            return '"$HOME"/' + shlex.quote(path[len(prefix):])
     return shlex.quote(path)
 
 
@@ -241,7 +250,16 @@ def remote_server(args, out, local_port, executable, argv, marker):
     default = "/opt/SEGGER/JLink/JLinkGDBServerCLExe" if args.jlink_device else "openocd"
     # Аргумент с {PORT} подставляется оболочкой узла; остальные экранируются как есть.
     parts = ['"%s"' % part.replace("{PORT}", "$p") if "{PORT}" in part else shlex.quote(part) for part in argv]
-    server = " ".join([remote_path(executable or default)] + parts)
+    program = remote_path(executable or default)
+    server = " ".join([program] + parts)
+    args.commands["server"] = "ssh %s %s" % (args.ssh, server)
+    if args.print_command:
+        print("SERVER ssh %s %s" % (args.ssh, server), flush=True)
+    # До запуска: исполняемый файл есть на узле. Иначе ждать готовности бессмысленно.
+    found = remote.ssh("command -v %s >/dev/null 2>&1 && echo FOUND || echo MISSING" % program).stdout
+    if "FOUND" not in found:
+        raise RuntimeError("GDB-сервер не найден на узле %s: %s (укажите абсолютный путь, ~/ или $HOME/; "
+                           "проверка: ssh %s 'command -v <путь>')" % (args.ssh, executable or default, args.ssh))
     # Свободный порт выбирает сам узел; nohup — чтобы сервер пережил выход из SSH.
     script = ("p=$(python3 -c 'import socket;s=socket.socket();s.bind((\"127.0.0.1\",0));print(s.getsockname()[1])' "
               "2>/dev/null || echo $((30000 + $$ % 20000))); log=/tmp/gdbpy-server-$$.log; "
@@ -280,6 +298,7 @@ def run(args):
                "started_utc": datetime.now(timezone.utc).isoformat(), "elf": str(args.elf) if args.elf else None,
                "scenario": str(args.scenario), "gdb": gdb, "timeout_s": args.timeout}
     server = None
+    args.commands = summary["commands"] = {}
     try:
         server, host, port, environment, described = backend(args, out)
         summary.update(environment=environment, backend=described)
@@ -287,11 +306,15 @@ def run(args):
                    SCENARIO_RESULT=str(out / "scenario.json"), SCENARIO_ENVIRONMENT=environment,
                    SCENARIO_RESET_HALT=getattr(args, "reset_halt", None) or args.reset_command or "reset halt",
                    SCENARIO_SETUP=getattr(args, "server_setup", ""),
-                   SCENARIO_FINISH=getattr(args, "server_finish", "continue &|detach"))
+                   SCENARIO_FINISH=getattr(args, "server_finish", "continue &|detach"),
+                   SCENARIO_SERVER=args.server_kind)
         # Список аргументов без оболочки: путь с пробелом не разваливает -ex "source ...".
         # Без ELF GDB работает по адресам: символов нет, сценарий читает память и регистры.
         command = [gdb, "-nx", "-batch"] + ([str(args.elf)] if args.elf else [])
         command += ["-ex", "source " + Path(args.scenario).resolve().as_posix()]
+        args.commands["gdb"] = subprocess.list2cmdline(command)
+        if args.print_command:
+            print("GDB " + args.commands["gdb"], flush=True)
         with (out / "gdb.log").open("w", encoding="utf-8") as log:
             flags = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
                      else {"start_new_session": True})
@@ -321,12 +344,44 @@ def run(args):
     finally:
         stop(server)
         summary["elapsed_s"] = round(time.monotonic() - started, 3)
+        if summary["status"] == "ERROR" and not summary.get("error"):
+            summary["error"] = first_cause(out)
         (out / "run.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     for name, passed in summary["checks"].items():
         print(("PASS " if passed else "FAIL ") + name)
-    tail = " (последний шаг: %s)" % summary["last_step"] if summary["status"] == "TIMEOUT" else ""
-    print("%s %s%s" % (summary["status"], out / "run.json", tail))
+    print(summary_line(summary))
+    print("прогон: %s" % (out / "run.json"))
     return {"PASS": 0, "FAIL": 1}.get(summary["status"], 2)
+
+
+def first_cause(out):
+    """Первая причина ERROR из журналов: исключение сценария и первая ошибка сервера."""
+    causes = []
+    # У сервера сначала — отказ опознания цели: он объясняет остальные ошибки журнала.
+    for name, patterns in (("сценарий", [r"^(?:gdb\.error|\w+(?:Error|Exception)): .+$"]),
+                           ("сервер", [r"^\w+ ?: .*examination failed.*$", r"^Error: .+$"])):
+        path = out / ("gdb.log" if name == "сценарий" else "server.log")
+        text = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+        found = next(filter(None, (re.search(p, text, re.M) for p in patterns)), None)
+        if found:
+            causes.append("%s: %s" % (name, found.group(0).strip()))
+    return "; ".join(causes) or None
+
+
+def summary_line(summary):
+    """Сводка одной строкой: статус, проверки, время, причина отказа или последний шаг."""
+    checks = summary.get("checks") or {}
+    line = "%s: проверок %d/%d, %.1f с" % (summary["status"], sum(1 for ok in checks.values() if ok), len(checks),
+                                         summary.get("elapsed_s", 0))
+    if summary.get("restored") is not None:
+        line += ", восстановление %s" % ("подтверждено" if summary["restored"] else "НЕ подтверждено")
+    if summary["status"] == "TIMEOUT":
+        line += "; последний шаг: %s" % summary.get("last_step")
+    elif summary.get("error"):
+        line += "; причина: %s" % summary["error"].strip().splitlines()[0][:300]
+    elif summary["status"] == "FAIL":
+        line += "; не прошли: %s" % ", ".join(name for name, ok in checks.items() if not ok)
+    return line
 
 
 def main():
@@ -359,6 +414,8 @@ def main():
     parser.add_argument("--ssh", help="user@host: OpenOCD на узле стенда и SSH-туннель к нему")
     parser.add_argument("--ssh-key", help="ключ SSH для --ssh")
     parser.add_argument("--check-gdb", action="store_true", help="только проверить GDB с Python")
+    parser.add_argument("--print-command", action="store_true",
+                        help="печатать команды сервера и GDB до запуска (они всегда пишутся в run.json)")
     args = parser.parse_args()
     if args.check_gdb:
         print("GDB с Python: " + find_gdb(args.gdb))

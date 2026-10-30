@@ -474,6 +474,50 @@ def check_gdbpy_ocd():
     return "actions, one-shot/server resume, report and DHCSR decode"
 
 
+def check_gdbpy_environment():
+    """environment.py и run_scenario.py: опознание отладчиков и журналов OpenOCD, пути на узле, сводка."""
+    sys.path.insert(0, str(GDBPY_SKILL / "scripts"))
+    import environment
+    import run_scenario
+    if environment.classify("0483", "3748", "STM32 STLink") != ("stlink", "ST-Link V2") or \
+            environment.classify("1366", "0105", "J-Link")[0] != "jlink" or \
+            environment.classify("abcd", "0001", "Board CMSIS-DAP")[0] != "cmsis-dap":
+        raise RuntimeError("classify")
+    if environment.serial_text("303636394646") != "0669FF" or environment.serial_text("ff0a1b") is not None:
+        raise RuntimeError("serial_text")
+    old = ("Info : STLINK V2J17S4 (API v2) VID:PID 0483:3748\nInfo : Target voltage: 3.241\n"
+           "Info : stm32f4x.cpu: Cortex-M4 r0p1 processor detected\n0xe000ed00: 410fc241 \n0xe0042000: 10016419 \n")
+    info = environment.parse_identify(old)
+    if (info.get("firmware"), info.get("stlink_jtag"), info.get("voltage"), info.get("core"), info.get("dev_id"),
+            info.get("target")) != ("V2J17S4", 17, 3.241, "Cortex-M4", "0x419", "stm32f4x"):
+        raise RuntimeError("ST-Link log: %s" % info)
+    m0 = environment.parse_identify("0xe000ed00: 410cc200 \n0x40015800: 20006440 \n")
+    if (m0.get("core"), m0.get("dev_id")) != ("Cortex-M0", "0x440"):
+        raise RuntimeError("Cortex-M0 IDCODE: %s" % m0)
+    jl = environment.parse_identify("Info : Firmware: J-Link V11 compiled Dec  4 2024\nInfo : VTarget = 3.300 V\n"
+                                    "Error: Error connecting DP: cannot read IDR\n")
+    if (jl.get("firmware"), jl.get("voltage"), jl.get("error")) != (
+            "J-Link V11 compiled Dec  4 2024", 3.3, "нет связи с целью (питание, провода SWD, режим сна)"):
+        raise RuntimeError("J-Link log: %s" % jl)
+    probe = {"place": "remote", "host": "user@stand", "kind": "stlink", "serial": None, "location": "7-1.1.3",
+             "firmware": "V2J17S4", "dev_id": "0x419", "target": "stm32f4x"}
+    if environment.fingerprint(probe) != "remote:user@stand|stlink|usb:7-1.1.3|V2J17S4|0x419":
+        raise RuntimeError("fingerprint: %s" % environment.fingerprint(probe))
+    args = type("A", (), {"ssh_key": None, "openocd_remote": "~/ocd/bin/openocd"})()
+    if environment.runner_args(args, probe)[-2:] != ["--adapter-usb-location", "7-1.1.3"]:
+        raise RuntimeError("runner args")
+    command = environment.identify_command(dict(probe, serial="ABC"), "openocd")
+    if "adapter serial ABC" not in command or "reset" in " ".join(command) or "shutdown" not in command:
+        raise RuntimeError("identify command must read only: %s" % command)
+    for path in ("~/x/openocd", "$HOME/x/openocd", "${HOME}/x/openocd"):
+        if run_scenario.remote_path(path) != '"$HOME"/x/openocd' or environment.remote_path(path) != '"$HOME"/x/openocd':
+            raise RuntimeError("remote path %s" % path)
+    line = run_scenario.summary_line({"status": "FAIL", "checks": {"a": True, "b": False}, "elapsed_s": 8.6})
+    if line != "FAIL: проверок 1/2, 8.6 с; не прошли: b":
+        raise RuntimeError("summary: %s" % line)
+    return "probe types, old ST-Link firmware, Cortex-M0 IDCODE, J-Link errors, fingerprint, paths, summary"
+
+
 def check_gdbpy_jlink():
     """jlink.py: группы команд JLinkExe и разбор ответа Commander без пробника."""
     sys.path.insert(0, str(GDBPY_SKILL / "scripts"))
@@ -517,6 +561,7 @@ KITS = [
     ("embedded-tech-spec: template and example", check_tech_spec),
     ("stm32-gdbpy-scenario: ocd.py parsing", check_gdbpy_ocd),
     ("stm32-gdbpy-scenario: jlink.py parsing", check_gdbpy_jlink),
+    ("stm32-gdbpy-scenario: environment and runner helpers", check_gdbpy_environment),
     ("stm32-renode-emulator: renode_compat", check_renode_compat),
     ("weact-logic-analyzer: capture integrity", check_weact_integrity),
     ("weact-logic-analyzer: self-test", check_weact),

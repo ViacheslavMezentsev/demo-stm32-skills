@@ -128,8 +128,10 @@ def report(actions, text):
 
 
 def remote_path(path):
-    if path.startswith("~/"):
-        return '"$HOME"/' + shlex.quote(path[2:])
+    """Путь для оболочки узла: ~/, $HOME/ и ${HOME}/ раскрываются в домашний каталог, остальное экранируется."""
+    for prefix in ("~/", "$HOME/", "${HOME}/"):
+        if path.startswith(prefix):
+            return '"$HOME"/' + shlex.quote(path[len(prefix):])
     return shlex.quote(path)
 
 
