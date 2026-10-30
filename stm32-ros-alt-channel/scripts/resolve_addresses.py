@@ -131,7 +131,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--elf", default=DEFAULT_ELF)
-    parser.add_argument("--spec", default=str(HERE / "fields.toml"))
+    # --fields — то же, что у record_diag.py: одно имя ключа в обоих скриптах.
+    parser.add_argument("--spec", "--fields", dest="spec", default=str(HERE / "fields.toml"),
+                        help="спецификация полей (TOML)")
     parser.add_argument("--svd", default=os.environ.get("STM32_SVD"),
                         help="SVD-файл MCU (по умолчанию $STM32_SVD); нужен для полей svd:...")
     parser.add_argument("--out", default=str(HERE / "addresses.json"))

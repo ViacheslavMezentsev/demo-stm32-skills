@@ -71,6 +71,74 @@ def build():
     return out
 
 
+def can_bits(ident, data):
+    """Расширенный кадр CAN до слота ACK: биты с бит-стаффингом и CRC-15 (как на линии)."""
+    raw = [0] + [(ident >> (28 - i)) & 1 for i in range(11)] + [1, 1] + [(ident >> (17 - i)) & 1 for i in range(18)]
+    raw += [0, 0, 0] + [(len(data) >> (3 - i)) & 1 for i in range(4)]
+    for byte in data:
+        raw += [(byte >> (7 - i)) & 1 for i in range(8)]
+    crc = 0
+    for bit in raw:
+        top = ((crc >> 14) & 1) ^ bit
+        crc = (crc << 1) & 0x7FFF
+        crc ^= 0x4599 if top else 0
+    raw += [(crc >> (14 - i)) & 1 for i in range(15)]
+    out, run, last = [], 0, None
+    for bit in raw:
+        out.append(bit)
+        run = run + 1 if bit == last else 1
+        last = bit
+        if run == 5:
+            out.append(1 - bit)
+            run, last = 1, 1 - bit
+    return out + [1]                     # разделитель CRC; дальше слот ACK
+
+
+def build_can():
+    """D1 — линия, D0 — TX узла B: B подтверждает два кадра узла A и передаёт свой."""
+    bitrate, n = 500_000, RATE // 100
+    spb = RATE // bitrate
+    s = Sig(n)
+    t = spb * 20
+    for ident, data, sender_is_b in ((0x1855F02A, b"\x2e\x65\x80", False), (0x1855F02A, b"\x11\x81", False),
+                                     (0x140BAAE3, b"\x5c\x08\x80", True)):
+        bits = can_bits(ident, data)
+        for k, bit in enumerate(bits):
+            s.set(1, t + k * spb, t + (k + 1) * spb, bit)
+            if sender_is_b:
+                s.set(0, t + k * spb, t + (k + 1) * spb, bit)
+        ack = t + len(bits) * spb
+        s.set(1, ack, ack + spb, 0)                       # слот ACK на линии: кадр принят
+        if not sender_is_b:
+            s.set(0, ack, ack + spb, 0)                   # подтверждает узел B
+        t = ack + spb * 400        # пауза больше «кадра», который декодер строит из одиночного бита ACK
+    raw = os.path.join(D, "can.bin")
+    open(raw, "wb").write(s.buf)
+    out = os.path.join(D, "can.sr")
+    subprocess.run(["sigrok-cli", "-I", f"binary:numchannels=8:samplerate={RATE}", "-i", raw, "-o", out], check=True)
+    return out, bitrate
+
+
+def check_can():
+    path, bitrate = build_can()
+    c = Capture(path)
+    frames = c.can_frames(1, bitrate)
+    assert [(hex(f["id"]), f["data"], f["ack"], f["warnings"]) for f in frames] == [
+        ("0x1855f02a", [0x2E, 0x65, 0x80], "dominant", []), ("0x1855f02a", [0x11, 0x81], "dominant", []),
+        ("0x140baae3", [0x5C, 0x08, 0x80], "dominant", [])], frames
+    assert frames[0]["t"] < frames[1]["t"] < frames[2]["t"]
+    role = c.can_role(1, 0, bitrate)
+    assert role["acked_by_other"] == 2 and role["other_own_frames"] == 1 and "TX узла" in role["verdict"], role
+    reverse = c.can_role(0, 1, bitrate)
+    assert "перепутаны" in reverse["verdict"], reverse
+    report = c.channel_report(bitrate)          # каналы файлов из -I binary называются 0..7
+    assert report[1]["longest_bits"] <= 5.01 and report[0]["single_bit"] > report[1]["single_bit"], report
+    assert Capture.dronecan(0x180B63AA) == {"kind": "service", "priority": 24, "type": 11, "request": False,
+                                            "dst": 99, "src": 42}
+    assert Capture.dronecan(0x1855F02A) == {"kind": "message", "priority": 24, "dtid": 22000, "src": 42}
+    print("CAN: линия, TX узла, ACK, DroneCAN — OK")
+
+
 def approx(a, b, tol):
     return a is not None and abs(a - b) <= tol
 
@@ -102,6 +170,7 @@ def main():
     csv = c.export("csv")
     assert os.path.getsize(csv) > 0
     print("синтетика: OK")
+    check_can()
 
     la = LogicAnalyzer("1m", driver="demo")
     cap = la.capture(os.path.join(D, "demo.sr"), duration=0.01)

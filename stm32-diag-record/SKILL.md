@@ -5,7 +5,7 @@ license: MIT
 compatibility: Windows или Linux с Python 3.9+ (3.11+ или пакет tomli для resolve_addresses.py), OpenOCD 0.11+ и SWD-пробник, который он поддерживает (ST-Link, CMSIS-DAP, J-Link и др.) или Renode 1.15+ без платы, GDB с Python для адресов по ELF, SVD-файл для полей svd:; для режима rtt-timer дополнительно тулчейн arm-none-eabi (as/ld/objcopy) и Cortex-M3/M4; ROS не требуется
 metadata:
   author: Viacheslav Mezentsev
-  version: "1.8.0"
+  version: "1.9.0"
   kind: diagnostic-recorder
   outputs: mcap, rosbag-ros1
   entrypoint: scripts/record_diag.py
@@ -206,7 +206,7 @@ python scripts/record_diag.py --backend renode --record mcap --seconds 10
 | | mcap | bag |
 |---|---|---|
 | Открыть в PlotJuggler | загрузчиком MCAP, без ROS, в том числе под Windows (разбор схем `ros1msg` подтверждается в R9 плана) | только с плагином ROS1, то есть под Linux с ROS |
-| Проверить | `mcap info`, Python-пакет `mcap` | `rosbag info` (ROS) или Python-пакет `rosbags` |
+| Проверить | `mcap info`, Python-пакет `mcap` или `scripts/read_mcap.py` без пакетов (сводка, тема, CSV) | `rosbag info` (ROS) или Python-пакет `rosbags` |
 | Сжатие | нет | `--compress bz2` |
 | Длинные записи | `--chunk-size` делит на чанки | сообщения копятся в памяти до конца записи |
 
@@ -214,7 +214,8 @@ python scripts/record_diag.py --backend renode --record mcap --seconds 10
 
 | Симптом | Причина и решение |
 |---|---|
-| «не удалось вычислить адреса» | нет GDB с Python (`GDB=<путь>`), неверный `--elf` или поле `svd:` без `--svd` |
+| «не удалось вычислить адреса» | нет GDB с Python (`GDB=<путь>`; сообщение перечисляет проверенные файлы — в xPack Python есть только у `arm-none-eabi-gdb-py3`), неверный `--elf` или поле `svd:` без `--svd` |
+| `resolve_addresses.py` не берёт свой файл полей | ключ — `--spec` или `--fields` (оба имени равнозначны) |
 | «OpenOCD не поднялся» | пробник занят другим OpenOCD или порт занят: журнал `*.openocd.log`, `--use-running` или `--port` |
 | в `--doctor` «Пробник НЕТ» | не подключён, нет драйвера или не тот `--interface`; при нескольких пробниках — `--serial` |
 | в `--doctor` «Конфигурации OpenOCD НЕТ» | скрипта цели нет в этой сборке OpenOCD: свой `.cfg` по пути или OpenOCD производителя (`--openocd`) |
@@ -260,11 +261,11 @@ python scripts/record_diag.py --backend rtt-timer --board f411ce --elf app.elf -
 
 | Ключ | Смысл |
 |---|---|
-| `--board` | стенд: `f103c8`, `f401cc`, `f411ce`, `f429zi`, `at32f403a` (параметры — `scripts/rtt/boards.toml`) |
+| `--board` | плата: `f103c8`, `f401cc`, `f411ce`, `f429zi`, `g474ce`, `at32f403a` (параметры — `scripts/rtt/boards.toml`; нет своей — добавить секцию с адресами RCC из RM серии, не «по сходству») |
 | `--timer` | свободный таймер: `TIM2` (по умолч.), `TIM3`, `TIM4`, `TIM5`; задайте другой, если `TIM2` занят прошивкой |
 | `--sram-base` | начало свободного окна SRAM (hex): выше `.bss`/кучи и ниже стека (см. карту ELF) |
 | `--toolchain` | каталог `bin` тулчейна (для сборки заглушки); иначе из `$STM32_TOOLCHAIN_PATH` или рядом с `$GDB` |
-| `--buffer` | размер кольцевого буфера, байт (по умолчанию 4096; округляется до кадра) |
+| `--buffer` | размер кольцевого буфера, байт (по умолчанию 4096; округляется до кадра); `--dryrun` и старт записи печатают, сколько миллисекунд данных он вмещает, и предлагают размер на 250 мс |
 | `--timer-clock-hz` | тактовая частота таймера, если отличается от `boards.toml` |
 | `--tick-expr` | выражение метки времени: у зонда `&platform_tick`, у прошивок на HAL `&uwTick` |
 | `--cleanup-gdb` | GDB с Python; иначе `arm-none-eabi-gdb-py3` или `arm-none-eabi-gdb` из `--toolchain` |
@@ -310,7 +311,15 @@ GDB-завершение требует собственного локальн�
 рабочее прерывание — счётчики и логика прошивки, завязанные на него, сломались бы. Поэтому берётся таймер,
 который прошивка не трогает: `--timer TIM3` (или TIM4/TIM5). `--doctor` проверяет по подключённой цели, что
 выбранный таймер не включён (бит в `APB1ENR`), счётчик не идёт (`CR1.CEN`) и его прерывание не разрешено в
-NVIC, и подсказывает, если таймер занят. Пример занятого TIM2 — `stm32-hwtest-blackpill`; там берут TIM3.
+NVIC, и подсказывает, если таймер занят; кроме того, он показывает состояние всех таймеров платы и список
+свободных. Пример занятого TIM2 — `stm32-hwtest-blackpill`; там берут TIM3. Запись проверяет то же самое ещё раз
+перед установкой (NVIC ISER/ISPR/IABR, бит тактирования, `CR1.CEN`, `DIER`) и при занятом таймере отказывает
+**до любых изменений**: таймер, который после отказа виден запущенным, — таймер прошивки, выключать его нельзя.
+Правильные адреса RCC платы здесь обязательны: с адресами другой серии (например, F4 на G4) проверки читают
+не тот регистр и пропускают занятый таймер.
+
+Если tick не растёт до записи, ядро обычно в halt (сообщение показывает DHCSR): сначала запустить его
+(`ocd.py resume`, `monitor resume`), `reset run` — только если это не помогло, сброс теряет состояние прошивки.
 
 *На будущее:* вместо замены вектора свободного таймера можно было бы перехватить уже используемое
 периодическое прерывание — заглушка в конце вызвала бы исходный обработчик (вариант `--vector <источник>
@@ -335,7 +344,8 @@ Renode, прерывание таймера выставляется прогр�
 ```
 scripts/record_diag.py       вход: доктор, dryrun, запись mcap/bag (OpenOCD, Renode, rtt-timer), --list-signals
 scripts/list_signals.py      офлайн: глобальные переменные из ELF -> CSV для спецификации полей
-scripts/fields.toml          пример спецификации полей (прошивка-зонд)
+scripts/fields.toml          пример спецификации полей (прошивка-зонд), частые случаи: etl::optional, static, svd:
+scripts/read_mcap.py         чтение MCAP без пакетов: сводка по темам, сообщения темы, CSV
 scripts/resolve_addresses.py адреса по ELF (GDB) и SVD, офлайн        ┐ общие модули: оригинал —
 scripts/svd_lookup.py        имена регистров SVD -> адреса             │ stm32-ros-alt-channel/scripts,
 scripts/bag_writer.py        писатель rosbag v2.0 (stdlib, bz2)        │ копии обновляет

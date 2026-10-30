@@ -34,7 +34,10 @@ def find_gdb(explicit=None, toolchain=None):
         found = shutil.which(name)
         if found:
             candidates.append(found)
+    checked = []
     for candidate in dict.fromkeys(candidates):
         if gdb_has_python(candidate):
             return candidate
-    raise SystemExit("не найден GDB с Python (%s); задайте GDB=<путь>" % ", ".join(GDB_NAMES))
+        checked.append("  %s → без Python (в xPack Python есть только у arm-none-eabi-gdb-py3)" % candidate)
+    raise SystemExit("не найден GDB с Python; задайте GDB=<путь к arm-none-eabi-gdb-py3>. Проверено:\n%s"
+                     % ("\n".join(checked) or "  в PATH и --toolchain нет %s" % ", ".join(GDB_NAMES)))

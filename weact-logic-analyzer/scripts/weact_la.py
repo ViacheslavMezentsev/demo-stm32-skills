@@ -6,6 +6,9 @@
     python3 weact_la.py doctor                 # проверить, что анализатор готов к работе
     python3 weact_la.py capture out.sr --rate 8m --time 0.5 [--trigger D7=r]
     python3 weact_la.py info out.sr            # частота, длина, фронты по каналам
+    python3 weact_la.py channels out.sr --bitrate 1000000      # уровни и короткие импульсы по каналам
+    python3 weact_la.py can out.sr --rx D1 [--dronecan] [--csv frames.csv]   # кадры CAN со временем
+    python3 weact_la.py can-role out.sr --line D1 --other D0   # второй канал — линия или TX узла?
 
     from weact_la import LogicAnalyzer
     la = LogicAnalyzer(samplerate="8m")
@@ -304,6 +307,103 @@ class Capture:
                 out.append((self.t(int(m.group(1))), self.t(int(m.group(2))), m.group(3)))
         return out
 
+    def channel_report(self, bitrate=None):
+        """По каждому каналу: доля единиц, фронты, импульсы низкого уровня; при bitrate — доля однобитных.
+
+        Первый шаг разбора записи шины: живой ли канал и на что он похож (линия, TX узла, помеха),
+        до декодера, который на чужом сигнале выдаёт правдоподобный мусор.
+        """
+        rows = []
+        for name, b in sorted(self.channels.items(), key=lambda kv: kv[1]):
+            runs = self.runs(b)
+            ones = sum(ln for lvl, _, ln in runs if lvl == 1)
+            low = [ln / self.samplerate for lvl, _, ln in runs[1:-1] if lvl == 0]
+            row = {"channel": name, "high": ones / self.n if self.n else 0, "edges": max(0, len(runs) - 1),
+                   "low_pulses": len(low), "low_min": min(low) if low else None, "low_max": max(low) if low else None}
+            if bitrate and low:
+                bit = 1.0 / bitrate
+                row["single_bit"] = sum(1 for x in low if x < 1.5 * bit) / len(low)
+                row["longest_bits"] = max(low) / bit
+            rows.append(row)
+        return rows
+
+    def can_frames(self, rx, bitrate=1000000):
+        """Кадры CAN декодером sigrok: [{t, sample, id, ext, data, ack, warnings}].
+
+        ack — уровень линии rx в слоте подтверждения: 'dominant' (кадр кто-то принял) или 'recessive'.
+        Время — по номерам отсчётов (--protocol-decoder-samplenum), а не по меткам декодера.
+        """
+        cmd = [self.sigrok, "-i", self.path, "-P", "can:can_rx=%s:nominal_bitrate=%d"
+               % (self._name_for_bit(self._bit(rx)), bitrate), "-A",
+               "can=sof:id:full-id:data:ack-slot:warnings", "--protocol-decoder-samplenum"]
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        if r.returncode != 0:
+            raise LAError(r.stderr.strip())
+        frames, bit = [], self._bit(rx)
+        for line in r.stdout.splitlines():
+            m = re.match(r"(\d+)-(\d+)\s+\S+?:\s*(.*)", line)
+            if not m:
+                continue
+            start, end, text = int(m.group(1)), int(m.group(2)), m.group(3)
+            if text == "Start of frame":
+                frames.append({"t": self.t(start), "sample": start, "id": None, "ext": False, "data": [],
+                               "ack": None, "warnings": []})
+                continue
+            if not frames:
+                continue
+            frame = frames[-1]
+            ident = re.match(r"(Full )?Identifier: \d+ \((0x[0-9a-fA-F]+)\)", text)
+            data = re.match(r"Data byte \d+: (0x[0-9a-fA-F]+)", text)
+            if ident:
+                if ident.group(1) or frame["id"] is None:
+                    frame["id"], frame["ext"] = int(ident.group(2), 16), bool(ident.group(1))
+            elif data:
+                frame["data"].append(int(data.group(1), 16))
+            elif text.startswith("ACK slot"):
+                middle = (start + end) // 2
+                frame["ack"] = "dominant" if not (self.data[middle] >> bit) & 1 else "recessive"
+                frame["ack_range"] = (start, end)
+            elif not text.startswith("Extended Identifier"):
+                frame["warnings"].append(text)
+        return frames
+
+    def can_role(self, line, other, bitrate=1000000):
+        """Чем является other рядом с линией line: TX узла (подтверждения + свои кадры) или та же линия.
+
+        На выходе приёмника трансивера (линия) видны все кадры. На TX узла — только его кадры и одиночные
+        биты ACK, которыми он подтверждает чужие кадры; декодер принимает такой бит за начало кадра и даёт
+        0x1FFFFFFF — это не помеха, а неверно выбранный канал для декодера.
+        """
+        frames = [f for f in self.can_frames(line, bitrate) if f.get("ack_range") and not f["warnings"]]
+        b = self._bit(other)
+        acked = sum(1 for f in frames
+                    if any(not (self.data[s] >> b) & 1 for s in range(f["ack_range"][0], f["ack_range"][1] + 1)))
+        own = [f for f in self.can_frames(other, bitrate) if f["id"] is not None and not f["warnings"] and f["data"]]
+        on_line = {(f["id"], tuple(f["data"])) for f in frames}
+        own_on_line = sum(1 for f in own if (f["id"], tuple(f["data"])) in on_line)
+        if len(own) > len(frames):
+            own_set = {(f["id"], tuple(f["data"])) for f in own}
+            own_on_line = sum(1 for key in on_line if key in own_set)
+        if frames and len(own) > 1.1 * len(frames) and own_on_line >= 0.9 * len(frames):
+            verdict = "%s — линия (на нём больше кадров), а %s похож на TX узла: каналы перепутаны" % (other, line)
+        elif frames and own and own_on_line == len(own) and len(own) >= 0.9 * len(frames):
+            verdict = "та же линия"
+        elif frames and acked >= 0.9 * (len(frames) - len(own)):
+            verdict = "TX узла: подтверждает чужие кадры и передаёт свои"
+        else:
+            verdict = "не похоже ни на линию, ни на TX узла этой шины"
+        return {"line_frames": len(frames), "acked_by_other": acked, "other_own_frames": len(own),
+                "other_own_on_line": own_on_line, "other_ids": sorted({f["id"] for f in own}), "verdict": verdict}
+
+    @staticmethod
+    def dronecan(ident):
+        """Разбор 29-битного ID по раскладке DroneCAN (UAVCAN v0)."""
+        src, priority = ident & 0x7F, ident >> 24
+        if ident & 0x80:
+            return {"kind": "service", "priority": priority, "type": (ident >> 16) & 0xFF,
+                    "request": bool(ident & 0x8000), "dst": (ident >> 8) & 0x7F, "src": src}
+        return {"kind": "message", "priority": priority, "dtid": (ident >> 8) & 0xFFFF, "src": src}
+
     def _name_for_bit(self, b):
         return next((name for name, bit in self.channels.items() if bit == b), f"D{b}")
 
@@ -505,6 +605,20 @@ def _main(argv):
     c.add_argument("--driver", default="fx2lafw")
     i = sub.add_parser("info")
     i.add_argument("file")
+    ch = sub.add_parser("channels")
+    ch.add_argument("file")
+    ch.add_argument("--bitrate", type=float, help="скорость линии: доля однобитных импульсов")
+    cn = sub.add_parser("can")
+    cn.add_argument("file")
+    cn.add_argument("--rx", default="D0", help="канал линии (выход приёмника трансивера)")
+    cn.add_argument("--bitrate", type=int, default=1000000)
+    cn.add_argument("--dronecan", action="store_true", help="разбирать 29-битные ID по раскладке DroneCAN")
+    cn.add_argument("--csv", help="записать кадры в CSV")
+    cr = sub.add_parser("can-role")
+    cr.add_argument("file")
+    cr.add_argument("--line", default="D1")
+    cr.add_argument("--other", default="D0")
+    cr.add_argument("--bitrate", type=int, default=1000000)
     a = ap.parse_args(argv)
     if a.cmd == "doctor":
         return 0 if all(ok for _, ok, _ in doctor()) else 1
@@ -515,6 +629,46 @@ def _main(argv):
         return 0
     if a.cmd == "info":
         print(Capture(a.file).summary())
+        return 0
+    if a.cmd == "channels":
+        cap = Capture(a.file)
+        print(f"{cap.path}: {cap.samplerate / 1e6:g} МГц, {cap.duration:.3f} с")
+        for row in cap.channel_report(a.bitrate):
+            extra = (f", однобитных {row['single_bit'] * 100:.0f} %, самый длинный {row['longest_bits']:.1f} бит"
+                     if "single_bit" in row else "")
+            lows = (f", низкие {row['low_min'] * 1e6:.2f}–{row['low_max'] * 1e6:.2f} мкс" if row["low_pulses"] else "")
+            print(f"  {row['channel']}: единиц {row['high'] * 100:.2f} %, фронтов {row['edges']}, "
+                  f"импульсов низкого уровня {row['low_pulses']}{lows}{extra}")
+        return 0
+    if a.cmd == "can":
+        cap = Capture(a.file)
+        frames = cap.can_frames(a.rx, a.bitrate)
+        counts = {}
+        for f in frames:
+            key = "ошибка: " + f["warnings"][0] if f["warnings"] else ("0x%08X" % f["id"] if f["ext"] else "0x%03X" % f["id"])
+            counts[key] = counts.get(key, 0) + 1
+        good = [f for f in frames if not f["warnings"]]
+        print(f"{cap.path}: кадров {len(frames)}, без замечаний {len(good)}, ACK доминантный у "
+              f"{sum(1 for f in good if f['ack'] == 'dominant')}")
+        for key, n in sorted(counts.items(), key=lambda kv: -kv[1]):
+            ident = int(key, 16) if key.startswith("0x") and len(key) == 10 else None
+            print(f"  {key} ×{n}" + (f"  {Capture.dronecan(ident)}" if a.dronecan and ident is not None else ""))
+        if a.csv:
+            import csv
+            with open(a.csv, "w", newline="", encoding="utf-8") as stream:
+                writer = csv.writer(stream)
+                writer.writerow(["t_s", "id", "ext", "data", "ack", "warnings"])
+                for f in frames:
+                    writer.writerow([f"{f['t']:.6f}", "" if f["id"] is None else hex(f["id"]), int(f["ext"]),
+                                     " ".join("%02X" % x for x in f["data"]), f["ack"] or "", "; ".join(f["warnings"])])
+            print(f"CSV: {a.csv}")
+        return 0
+    if a.cmd == "can-role":
+        result = Capture(a.file).can_role(a.line, a.other, a.bitrate)
+        print(f"{a.other} рядом с линией {a.line}: {result['verdict']}")
+        print(f"  кадров на линии {result['line_frames']}, из них подтверждены импульсом на {a.other}: "
+              f"{result['acked_by_other']}; своих кадров на {a.other}: {result['other_own_frames']} "
+              f"(есть на линии: {result['other_own_on_line']}), ID: {', '.join(hex(i) for i in result['other_ids'])}")
         return 0
 
 

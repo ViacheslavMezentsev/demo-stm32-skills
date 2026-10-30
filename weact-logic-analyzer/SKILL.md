@@ -1,11 +1,11 @@
 ---
 name: weact-logic-analyzer
-description: Логический анализатор WeAct LogicAnalyzerV1 (FX2, 8 каналов, 24 МГц) на Windows и Linux через sigrok-cli — проверка наличия, права, запись, обёртка weact_la.py и типовые измерения для STM32 (ISR, PWM, UART, I2C, SPI, старт, джиттер). Плюс работа на удалённом стенде по SSH и поиск начала обмена, когда момент события зависит от сценария под отладчиком.
+description: Логический анализатор WeAct LogicAnalyzerV1 (FX2, 8 каналов, 24 МГц) на Windows и Linux через sigrok-cli — проверка наличия, права, запись, обёртка weact_la.py и типовые измерения для STM32 (ISR, PWM, UART, I2C, SPI, CAN, старт, джиттер), разбор шины CAN по сырой записи (линия или TX узла, кадры со временем, DroneCAN). Плюс работа на удалённом стенде по SSH и поиск начала обмена, когда момент события зависит от сценария под отладчиком.
 license: MIT
 compatibility: логический анализатор Saleae-совместимый (в том числе WeAct) и sigrok/PulseView на стенде
 metadata:
   author: Viacheslav Mezentsev
-  version: "1.2.0"
+  version: "1.3.0"
   workflow: исследование → навык → проект
 allowed-tools: Bash Read Write Edit Glob Grep
 ---
@@ -170,6 +170,9 @@ CLI:
 python3 weact_la.py doctor                                     # проверка цепочки ПО→USB→права→sigrok
 python3 weact_la.py capture run.sr --rate 8m --time 0.2 --trigger D7=r --timeout 5
 python3 weact_la.py info run.sr                                # фронты, частота, скважность по каналам
+python3 weact_la.py channels run.sr --bitrate 1000000          # уровни, короткие импульсы, доля однобитных
+python3 weact_la.py can run.sr --rx D1 --dronecan --csv f.csv  # кадры CAN: время, ID, данные, ACK, замечания
+python3 weact_la.py can-role run.sr --line D1 --other D0       # второй канал — линия, TX узла или помеха
 ```
 
 API:
@@ -190,6 +193,10 @@ API:
 | `.spi(clk, mosi, miso, cs)` → `[(mosi, miso)]` | декодер SPI |
 | `.i2c(scl, sda)` / `.i2c_transactions(scl, sda)` | события / `[{'addr','read','data','nack'}]` |
 | `.decode(decoder, annotation, **opts)` | любой декодер sigrok → `[(t0, t1, текст)]` |
+| `.channel_report(bitrate)` | по каналам: доля единиц, фронты, импульсы низкого уровня, доля однобитных |
+| `.can_frames(rx, bitrate)` | кадры CAN: `t`, `id`, `ext`, `data`, `ack` (уровень линии в слоте), `warnings` |
+| `.can_role(line, other, bitrate)` | подтверждает ли `other` кадры линии, какие кадры он передаёт сам, вывод |
+| `Capture.dronecan(id)` | разбор 29-битного ID: приоритет, сообщение (DTID) или сервис (тип, запрос/ответ, адресат), узел |
 | `.export("csv"/"vcd")`, `.summary()` | экспорт, сводка |
 
 Каналы — номера `0..7` или имена `"D0"`. Триггер: `{7: "r"}`, `{0: "f", 1: "1"}` (И), `"D7=r"`.
@@ -309,7 +316,33 @@ finally:
 cap = la.collect(timeout=5)                 # TriggerTimeout → прошивка не дошла до маркера
 ```
 
-### 7.10 Фикстура pytest
+### 7.10 Шина CAN (D0, D1 — выходы RXD трансиверов или TXD контроллеров, 1 Мбит/с — 4–8 МГц)
+
+Порядок, проверенный на стенде с DroneCAN (две платы, 1 Мбит/с):
+
+1. **Сырая запись, без декодера на входе**: `.sr` на всё окно, все провода, о которых есть сомнения.
+   Длину записи сверить с заказанной: при параллельной нагрузке на узле (candump, клиент CAN, чтение
+   UART) 8 МГц × 12 с дважды дали ~3 с и строку `Device only sent N samples` при коде 0; без нагрузки и
+   на 4 МГц — полные 12 с. `weact_la.py capture` такую запись отклоняет, `sigrok-cli` напрямую — нет.
+2. **Статистика каналов** (`channels --bitrate`): линия — импульсы низкого уровня от 1 до 5 бит
+   (стаффинг не даёт больше 5), около половины однобитных; **TX узла** — почти только однобитные
+   импульсы (биты ACK, которыми узел подтверждает чужие кадры) и редкие свои кадры.
+3. **Роль второго канала** (`can-role`): на TX узла каждый кадр линии имеет однобитный импульс в
+   слоте ACK, а свои кадры узла декодируются с верным CRC. Декодер на таком канале даёт
+   `0x1FFFFFFF` и `Identifier bits 10..4 must not be all recessive` — это бит ACK, принятый за начало
+   кадра, а не помеха и не «плохой отвод».
+4. **Кадры со временем** (`can --rx <линия> --dronecan --csv`): время — по номерам отсчётов
+   (`--protocol-decoder-samplenum`), разбор ID по раскладке DroneCAN. Отбирать кадры по ID целиком,
+   а не по первым цифрам: ответ сервиса идёт с другим приоритетом и адресатом
+   (запрос `0x140BAAE3` 99 → 42, ответ `0x180B63AA` 42 → 99).
+
+Ограничения sigrok-cli 0.7.1: `sample_point` декодера CAN из командной строки не задаётся ни как `60`,
+ни как `60.0` (`Unsupported type for option 'sample_point' (d)`), действует 70 %; опции —
+`sigrok-cli -P can --show`. Доминантный слот ACK значит, что кадр принял хотя бы один узел; это не
+доказывает, что прошивка его обработала: на стенде часть запросов, принятых контроллером CAN платы,
+осталась без ответа и без строки в журнале прошивки.
+
+### 7.11 Фикстура pytest
 
 ```python
 import pytest
@@ -398,7 +431,7 @@ def test_pwm(la, tmp_path):
 ```
 scripts/
   test_weact_la.py       тесты обёртки
-  weact_la.py            doctor / capture / info: проверка окружения, запись, разбор (sigrok-cli)
+  weact_la.py            doctor / capture / info / channels / can / can-role: окружение, запись, разбор (sigrok-cli)
 ```
 
 Пути — относительно каталога навыка. Обёртке нужны только стандартная библиотека Python 3.8+

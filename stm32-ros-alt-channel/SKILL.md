@@ -5,7 +5,7 @@ license: MIT
 compatibility: Windows с Python 3.8+, OpenOCD и ST-Link; WSL2 (Ubuntu) с ROS Noetic и socat; WSL в режиме mirrored networking, чтобы обращаться к службам Windows по 127.0.0.1; счётчик времени ядра WSL должен быть исправен (см. раздел про время)
 metadata:
   author: Viacheslav Mezentsev
-  version: "1.4.1"
+  version: "1.4.2"
   kind: diagnostic-channel
   transports: swd-openocd, uart-rosserial
   formats: rosbag2-ros1, mcap

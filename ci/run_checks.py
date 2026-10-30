@@ -256,6 +256,47 @@ def check_diag_helpers():
     return "unaligned words, kinds, shift and mask"
 
 
+def check_diag_boards_mcap():
+    """boards.toml (G4 и списки таймеров), запас кольца RTT, чтение MCAP без пакета mcap."""
+    scripts = ROOT / "stm32-diag-record" / "scripts"
+    sys.path[:0] = [str(scripts), str(scripts / "rtt")]
+    import tomllib
+    import mcap_writer
+    import read_mcap
+    import rtt_timer
+    boards = tomllib.loads((scripts / "rtt" / "boards.toml").read_text(encoding="utf-8"))
+    g4 = boards["g474ce"]
+    if (g4["rcc_enable_reg"], g4["rcc_cfgr"], g4["ppre1_shift"]) != (0x40021058, 0x40021008, 8):
+        raise RuntimeError("G474 RCC layout: %s" % g4)
+    if "TIM5" in boards["f103c8"]["timers"] or any(t not in boards["timers"] for t in boards["f103c8"]["timers"]):
+        raise RuntimeError("F103C8 timers")
+    args = type("A", (), {"board": "g999", "timer": ""})()
+    try:
+        rtt_timer.load_board(args)
+        raise RuntimeError("unknown board accepted")
+    except SystemExit as error:
+        if "g474ce" not in str(error) or "boards.toml" not in str(error):
+            raise RuntimeError("unknown board message: %s" % error)
+    layout = {"rtt": {"size": 4096}, "frame": {"len": 40}, "timer": {"actual_hz": 1000.0}}
+    frames, reserve, suggested = rtt_timer.ring_reserve(layout)
+    if (frames, round(reserve, 3), suggested) != (102, 0.102, 16384):
+        raise RuntimeError("ring reserve: %s" % ((frames, reserve, suggested),))
+    with tempfile.TemporaryDirectory() as folder:
+        path = pathlib.Path(folder) / "x.mcap"
+        writer = mcap_writer.McapWriter(str(path))
+        writer.add_connection("/a", "std_msgs/UInt32")
+        writer.add_connection("/b", "std_msgs/Float32")
+        for i in range(5):
+            writer.write("/a", i * 10, 1, i * 1000)
+            writer.write("/b", 0.5 * i, 1, i * 1000)
+        writer.close()
+        schemas, channels, messages = read_mcap.load(str(path))
+        values = [read_mcap.value(schemas[channels[c][1]], m) for c, _, m in messages if channels[c][0] == "/a"]
+        if values != [0, 10, 20, 30, 40] or len(messages) != 10:
+            raise RuntimeError("read_mcap: %s" % values)
+    return "G474 RCC, per-board timers, unknown board hint, ring reserve 102 frames/102 ms -> 16 KiB, MCAP read back"
+
+
 # OpenOCD 0.12 output shapes for the doctor parser (adapters and targets other than ST-Link and STM32 too).
 OPENOCD_STLINK_OK = """Open On-Chip Debugger 0.12.0
 Info : clock speed 2000 kHz
@@ -689,6 +730,7 @@ KITS = [
     ("weact-logic-analyzer: self-test", check_weact),
     ("stm32-rtt-console: OpenOCD RTT commands", check_openocd_rtt),
     ("stm32-diag-record: conversion helpers", check_diag_helpers),
+    ("stm32-diag-record: boards, RTT ring reserve, MCAP reader", check_diag_boards_mcap),
     ("stm32-diag-record: doctor parses OpenOCD output", check_diag_doctor),
     ("stm32-diag-record: telnet survives async OpenOCD messages", check_diag_telnet_async),
     ("stm32-diag-record: rtt-timer frame parser", check_rtt_frames),

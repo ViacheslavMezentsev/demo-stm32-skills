@@ -30,7 +30,8 @@ bit_cen = 0x0001
 bit_uie = 0x0001
 bit_ug = 0x0001
 
-# Таймеры: база, глобальный IRQ, бит <TIMx>EN в APB1ENR. TIM2–TIM4 есть и у F1, и у F4; TIM5 — у F4.
+# Таймеры: база, глобальный IRQ, бит <TIMx>EN в APB1ENR (у G4 — APB1ENR1). База, IRQ и бит у F1, F4, G4 и AT32
+# совпадают; какие таймеры есть у платы, задаёт её ключ timers (доктор проверяет только их).
 [timers.TIM2]
 base = 0x40000000
 irq = 28
@@ -57,6 +58,7 @@ rcc_enable_bit = 0x00000001     # TIM2EN
 tim_clock_hz = 72000000
 rcc_cfgr = 0x40021004
 ppre1_shift = 8
+timers = ["TIM2", "TIM3", "TIM4"]   # TIM5 у F103C8 нет
 
 [f401cc]
 core = "cortex-m4"
@@ -96,6 +98,19 @@ rcc_enable_reg = 0x4002101C     # CRM_APB1EN (раскладка как у F1)
 rcc_enable_bit = 0x00000001
 tim_clock_hz = 120000000
 rcc_cfgr = 0x40021004
+ppre1_shift = 8
+
+# RM0440: RCC @ 0x40021000; APB1ENR1 — смещение 0x58, CFGR — 0x08, PPRE1 — биты 10:8.
+# SRAM1 80 КиБ + SRAM2 16 КиБ + CCM 32 КиБ (псевдоним с 0x20018000) — 128 КиБ подряд.
+# Адреса RCC у G4 другие, чем у F4: брать их «по сходству» с F4 нельзя — проверки занятости читали бы не тот регистр.
+[g474ce]
+core = "cortex-m4"
+mcu = "STM32G474CE"
+ram_kib = 128
+rcc_enable_reg = 0x40021058     # RCC_APB1ENR1
+rcc_enable_bit = 0x00000001     # TIM2EN
+tim_clock_hz = 170000000
+rcc_cfgr = 0x40021008           # RCC_CFGR
 ppre1_shift = 8
 
 [f030r8]

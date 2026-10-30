@@ -39,6 +39,9 @@ from gdb_tools import find_gdb
 from rtt_frames import FrameReader  # noqa: E402
 
 RTT_SERVER_PORT = 19021
+# Запас кольца RTT по времени: хост читает его по Telnet с паузами; при 1 кГц и 8 полях кольцо 4 КиБ
+# (~100 мс) теряло кадры, при 6 полях (~130 мс) — нет. 250 мс — с запасом.
+RESERVE_S = 0.25
 SEQ_TOPIC = "/_diag/rtt/seq"
 TICK_TOPIC = "/_diag/rtt/tick_ms"
 
@@ -87,15 +90,25 @@ def install(telnet, layout, image_path, saved):
     """Залить образ и включить перехват. Возвращает исходные VTOR и RCC для восстановления."""
     timer, nvic = layout["timer"], layout["nvic"]
     mask = 1 << nvic["bit"]
-    for address in (nvic["iser"], nvic["ispr"], nvic["iser"] + 0x200):
-        if mdw(telnet, address) & mask:
-            raise RuntimeError("таймер имеет enabled/pending/active IRQ; запись не начата")
-    if mdw(telnet, layout["rcc"]["enable_reg"]) & layout["rcc"]["enable_bit"]:
-        raise RuntimeError("тактирование таймера уже включено; запись не начата")
+    # Занятость — до любых изменений: при отказе цель не тронута, и работающий таймер — таймер прошивки.
+    found = {"NVIC ISER": mdw(telnet, nvic["iser"]) & mask, "NVIC ISPR": mdw(telnet, nvic["ispr"]) & mask,
+             "NVIC IABR": mdw(telnet, nvic["iser"] + 0x200) & mask,
+             "RCC %s" % layout["rcc"].get("name", "APB1ENR"): mdw(telnet, layout["rcc"]["enable_reg"])
+             & layout["rcc"]["enable_bit"],
+             "CR1.CEN": mdw(telnet, timer["cr1"]) & timer["bit_cen"], "DIER": mdw(telnet, timer["dier"])}
+    busy = [name for name, value in found.items() if value]
+    if busy:
+        raise RuntimeError("%s занят прошивкой (%s; IRQ %d, бит %d регистра 0x%08X); запись не начата, цель не "
+                           "изменялась. Работающий таймер — таймер прошивки, выключать его нельзя. Выберите другой: "
+                           "--timer TIMx; свободные покажет --doctor"
+                           % (timer["name"], ", ".join(busy), timer["irq"], nvic["bit"], nvic["iser"]))
     first = mdw(telnet, layout["tick_address"])
     time.sleep(0.1)
     if mdw(telnet, layout["tick_address"]) == first:
-        raise RuntimeError("tick не растёт до записи; проверьте прошивку и выполните сброс")
+        dhcsr = mdw(telnet, 0xE000EDF0)
+        raise RuntimeError("tick не растёт до записи (DHCSR 0x%08X%s); запись не начата. Ядро в halt — запустите "
+                           "его: ocd.py resume (или monitor resume); reset run — только если resume не помог: "
+                           "сброс теряет состояние прошивки" % (dhcsr, ", ядро остановлено" if dhcsr & (1 << 17) else ""))
     saved.update(vtor=mdw(telnet, layout["vtor"]), rcc=mdw(telnet, layout["rcc"]["enable_reg"]))
     telnet.command("halt")
     telnet.command("load_image {%s} 0x%08X bin" % (image_path.as_posix(), layout["sram_base"]))
@@ -285,14 +298,44 @@ def load_board(args):
     boards = tomllib.loads((HERE / "boards.toml").read_text(encoding="utf-8"))
     board = args.board.lower()
     if board not in boards:
-        raise SystemExit("нет стенда %r в boards.toml (есть: %s)"
-                         % (board, ", ".join(k for k in boards if k != "defaults")))
+        raise SystemExit("нет платы %r в %s (есть: %s). Добавьте секцию с адресами RCC из Reference Manual своей "
+                         "серии и источником в комментарии; адреса «по сходству» с другой серией не подставлять"
+                         % (board, HERE / "boards.toml", ", ".join(known_boards(boards))))
     cfg = dict(boards["defaults"])
     cfg.update(boards[board])
     if "unsupported" not in cfg:
         import build_rtt_image
         cfg = build_rtt_image.select_timer(cfg, boards, getattr(args, "timer", ""))
     return board, cfg
+
+
+def known_boards(boards):
+    return [name for name, value in boards.items() if name not in ("defaults", "timers") and isinstance(value, dict)]
+
+
+def timer_survey(telnet, cfg):
+    """Состояние всех таймеров платы из [timers]: какие свободны (тактирование, CEN, IRQ)."""
+    boards = tomllib.loads((HERE / "boards.toml").read_text(encoding="utf-8"))
+    rows = []
+    for name in cfg.get("timers") or sorted(boards.get("timers", {})):
+        timer = boards["timers"][name]
+        bank = cfg["nvic_iser_base"] + 4 * (timer["irq"] // 32)
+        bit = 1 << (timer["irq"] % 32)
+        clock = bool(mdw(telnet, cfg["rcc_enable_reg"]) & timer["rcc_bit"])
+        cen = bool(mdw(telnet, timer["base"] + cfg["reg_cr1"]) & cfg["bit_cen"]) if clock else False
+        irq = bool((mdw(telnet, bank) | mdw(telnet, bank + 0x100) | mdw(telnet, bank + 0x200)) & bit)
+        rows.append((name, not (clock or cen or irq), "тактирование %s, CEN %s, IRQ %d %s"
+                     % ("вкл" if clock else "выкл", "1" if cen else "0", timer["irq"], "занят" if irq else "свободен")))
+    return rows
+
+
+def ring_reserve(layout):
+    """Сколько времени кольцо RTT вмещает данные цели: кадры в буфере / частота таймера."""
+    frames = layout["rtt"]["size"] // layout["frame"]["len"]
+    hz = layout["timer"]["actual_hz"]
+    reserve = frames / hz if hz else 0
+    needed = int(layout["frame"]["len"] * hz * RESERVE_S) + 1
+    return frames, reserve, 1 << (needed - 1).bit_length()
 
 
 def elf_facts(elf, toolchain):
@@ -403,6 +446,12 @@ def doctor(args):
             checks.append(("%s свободен" % cfg["timer"], not running,
                            "включён прошивкой (CEN/IRQ)" if running else
                            ("тактирование уже включено" if apb1 & cfg["rcc_enable_bit"] else "свободен")))
+            survey = timer_survey(telnet, cfg)
+            free = [name for name, ok, _ in survey if ok]
+            for name, ok, detail in survey:
+                details.append("%s: %s" % (name, detail))
+            details.append("свободные таймеры: %s" % (", ".join(free) or "нет")
+                           + ("; --timer %s" % free[0] if free and cfg["timer"] not in free else ""))
         else:
             details.append("цель не опрашивалась: нет --openocd и не задан --use-running (офлайн-проверки выше)")
     except (OSError, SystemExit, RuntimeError) as error:
@@ -428,7 +477,7 @@ def doctor(args):
 def run(args):
     """Вызывается из record_diag при --backend rtt-timer."""
     if not args.board:
-        raise SystemExit("для --backend rtt-timer нужен --board (f411ce, f103c8, f401cc, f429zi, at32f403a)")
+        raise SystemExit("для --backend rtt-timer нужен --board (f411ce, f103c8, f401cc, f429zi, g474ce, at32f403a)")
     if not args.sram_base:
         raise SystemExit("нужен --sram-base: свободное окно SRAM (hex), см. --doctor и карту памяти ELF")
     if not args.toolchain:
@@ -456,6 +505,11 @@ def run(args):
               layout["timer"]["irq"], layout["timer"]["actual_hz"], layout["vectors"]["address"]))
         print("  RTT:     блок 0x%08X, буфер 0x%08X (%d байт), сервер :%d"
               % (layout["rtt"]["control_block"], layout["rtt"]["buffer"], layout["rtt"]["size"], RTT_SERVER_PORT))
+        frames, reserve, suggested = ring_reserve(layout)
+        print("  кольцо:  %d кадров по %d байт = %.0f мс данных при %.0f Гц%s" % (
+            frames, layout["frame"]["len"], reserve * 1000, layout["timer"]["actual_hz"],
+            "" if reserve >= RESERVE_S else "; мало (нужно ≥ %.0f мс): --buffer %d или ниже --rate"
+            % (RESERVE_S * 1000, suggested)))
         return 0
 
     if args.use_running or args.host not in ("127.0.0.1", "localhost"):
@@ -472,6 +526,10 @@ def run(args):
     except BaseException:
         diag.stop_openocd(process)
         raise
+    frames, reserve, suggested = ring_reserve(layout)
+    if reserve < RESERVE_S:
+        print("ВНИМАНИЕ: кольцо вмещает %.0f мс данных (%d кадров); при задержке чтения хостом будут потери: "
+              "--buffer %d или ниже --rate" % (reserve * 1000, frames, suggested))
     saved = {}
     cleanup_report = {"ok": False}
     try:
